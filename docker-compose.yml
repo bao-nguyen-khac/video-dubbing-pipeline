@@ -1,0 +1,41 @@
+services:
+  # CLI thuần (docker compose run --rm pipeline --url ... --script-mode ...) —
+  # không tự khởi động cùng `docker compose up` (profile "cli").
+  pipeline:
+    build: .
+    image: media-generation-pipeline:latest
+    env_file:
+      - .env
+    volumes:
+      - ./jobs:/app/jobs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["cli"]
+
+  # Web API: FastAPI (web/backend) + toàn bộ pipeline, dùng chung image với
+  # service `pipeline` ở trên, chỉ đổi entrypoint sang uvicorn.
+  web-api:
+    build: .
+    image: media-generation-pipeline:latest
+    entrypoint: ["uvicorn", "web.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    volumes:
+      - ./jobs:/app/jobs
+    extra_hosts:
+      # macOS/Windows Docker Desktop tự có host.docker.internal; dòng này cần
+      # thiết để cùng lệnh chạy được trên Linux (host-gateway từ Docker 20.10+).
+      # Vô hại nếu ROUTER_BASE_URL trong .env đã là IP thật (không dùng host.docker.internal).
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+
+  # Web UI: nginx serve React build tĩnh, proxy /api sang web-api (cùng
+  # network nội bộ compose, xem web/frontend/nginx.conf) — không cần CORS.
+  web-ui:
+    build:
+      context: ./web/frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - web-api

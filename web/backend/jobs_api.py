@@ -1,0 +1,193 @@
+"""
+web/backend/jobs_api.py — Endpoint quản lý job (submit/list/detail/output/retry).
+
+Chỉ gọi lại các hàm đã có trong pipeline.py (create_job, read_job,
+detect_platform, run_pipeline, status_from_artifacts) — không viết lại logic xử
+lý media (Constitution Principle I, research.md).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from fastapi import APIRouter
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
+from pipeline import JOBS_DIR, create_job, detect_platform, read_job, status_from_artifacts
+from web.backend.job_runner import start_job
+
+router = APIRouter()
+
+# % ước lượng theo bước pipeline hiện tại (Clarification 2026-07-26, research.md)
+_STATUS_PROGRESS_MAP: dict[str, int] = {
+    "pending": 0,
+    "downloading": 15,
+    "transcribing": 32,
+    "scripting": 48,
+    "synthesizing": 65,
+    "merging": 82,
+    "done": 100,
+}
+
+
+def _error(status_code: int, message: str, **extra) -> JSONResponse:
+    """Response lỗi đồng nhất `{"error": ...}` cho mọi status code (T026: rà soát)."""
+    return JSONResponse(status_code=status_code, content={"error": message, **extra})
+
+
+def _iter_all_jobs():
+    """Yield job dict cho mỗi jobs/*/job.json đọc được (bỏ qua file hỏng/thiếu)."""
+    if not JOBS_DIR.exists():
+        return
+    for job_dir in sorted(JOBS_DIR.iterdir()):
+        if not job_dir.is_dir():
+            continue
+        job_json_path = job_dir / "job.json"
+        if not job_json_path.exists():
+            continue
+        try:
+            with open(job_json_path, encoding="utf-8") as f:
+                yield json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+
+def find_running_job_id() -> str | None:
+    """
+    Trả về job_id của job đang xử lý (status không thuộc {done, failed}), hoặc
+    None nếu không có job nào đang chạy.
+
+    Luôn quét trực tiếp jobs/*/job.json (không dùng biến in-memory) để không bị
+    lệch trạng thái khi backend restart giữa lúc job đang chạy (research.md).
+    """
+    for job in _iter_all_jobs():
+        if job.get("status") not in ("done", "failed"):
+            return job.get("job_id")
+    return None
+
+
+def status_to_progress(job: dict) -> int:
+    """
+    Map job.json.status -> % tiến trình ước lượng theo bước (research.md).
+
+    Với job đã "failed" (trạng thái cuối, không tự biết bước dở dang), suy ra %
+    từ artifact đã có (tái dùng status_from_artifacts của pipeline.py) — giữ %
+    của bước cuối cùng đã hoàn tất trước khi lỗi.
+    """
+    status = job.get("status", "pending")
+    if status == "failed":
+        status = status_from_artifacts(job)
+    return _STATUS_PROGRESS_MAP.get(status, 0)
+
+
+def _job_to_summary(job: dict) -> dict:
+    """Job Summary (data-model.md) — dùng cho GET /api/jobs và làm nền cho detail."""
+    return {
+        "job_id": job["job_id"],
+        "source_url": job["source_url"],
+        "platform": job["platform"],
+        "status": job["status"],
+        "progress_percent": status_to_progress(job),
+        "created_at": job["created_at"],
+    }
+
+
+def _job_to_detail(job: dict) -> dict:
+    """Job Detail (data-model.md) — dùng cho GET /api/jobs/{job_id}."""
+    detail = _job_to_summary(job)
+    has_output = bool(job["artifacts"].get("output_video"))
+    detail.update(
+        {
+            "script_mode": job["script_mode"],
+            "error": job.get("error"),
+            "warnings": job.get("warnings", {}),
+            "output_video_url": f"/api/jobs/{job['job_id']}/output" if has_output else None,
+            "can_retry": job["status"] == "failed",
+        }
+    )
+    return detail
+
+
+class SubmitJobRequest(BaseModel):
+    url: str
+    script_mode: str  # "translate" | "rewrite"
+
+
+@router.post("", status_code=201)
+async def submit_job(body: SubmitJobRequest):
+    """POST /api/jobs — submit job mới (FR-001, FR-002, FR-009, contracts/api.md)."""
+    if body.script_mode not in ("translate", "rewrite"):
+        return _error(400, "script_mode phải là 'translate' hoặc 'rewrite'")
+
+    try:
+        platform = detect_platform(body.url)
+    except ValueError as e:
+        return _error(400, str(e))
+
+    running_job_id = find_running_job_id()
+    if running_job_id:
+        return _error(409, "Đang có job xử lý, vui lòng chờ", running_job_id=running_job_id)
+
+    job = create_job(body.url, platform, body.script_mode)
+    start_job(body.url, body.script_mode, job["job_id"])
+    return {"job_id": job["job_id"]}
+
+
+@router.get("")
+async def list_jobs():
+    """GET /api/jobs — danh sách Job Summary, mới nhất trước (US2, data-model.md)."""
+    jobs = [_job_to_summary(job) for job in _iter_all_jobs()]
+    jobs.sort(key=lambda j: j["created_at"], reverse=True)
+    return {"jobs": jobs}
+
+
+@router.get("/{job_id}")
+async def get_job(job_id: str):
+    """GET /api/jobs/{job_id} — Job Detail (data-model.md, contracts/api.md)."""
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+    return _job_to_detail(job)
+
+
+@router.get("/{job_id}/output")
+async def get_job_output(job_id: str):
+    """GET /api/jobs/{job_id}/output — stream video sản phẩm (FR-004)."""
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    output_path = job["artifacts"].get("output_video")
+    if not output_path or not Path(output_path).exists():
+        return _error(404, "Job chưa có video output")
+
+    return FileResponse(output_path, media_type="video/mp4", filename=f"{job_id}.mp4")
+
+
+@router.post("/{job_id}/retry", status_code=202)
+async def retry_job(job_id: str):
+    """
+    POST /api/jobs/{job_id}/retry — resume job đã failed (US3, FR-008).
+
+    Dùng lại đúng cơ chế resume của pipeline.run_pipeline() (contracts/cli.md
+    của 001): gọi lại với cùng job_id + url/script_mode gốc, các artifact đã
+    có (source.mp4, transcript.json...) được giữ nguyên, không tải lại từ đầu.
+    """
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    if job["status"] != "failed":
+        return _error(409, f"Job đang ở trạng thái '{job['status']}', chỉ retry được job 'failed'")
+
+    running_job_id = find_running_job_id()
+    if running_job_id:
+        return _error(409, "Đang có job khác xử lý, vui lòng chờ", running_job_id=running_job_id)
+
+    start_job(job["source_url"], job["script_mode"], job_id)
+    return {"job_id": job_id}

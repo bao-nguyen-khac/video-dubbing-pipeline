@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Jobs (runtime data — không commit)
+jobs/*
+!jobs/.gitignore
+
+# Model cache (faster-whisper)
+~/.cache/huggingface/
+*.bin
+*.safetensors
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Test output
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js / frontend (web/frontend, feature 002-web-ui)
+node_modules/
+web/frontend/dist/
+web/frontend/.vite/
+npm-debug.log*

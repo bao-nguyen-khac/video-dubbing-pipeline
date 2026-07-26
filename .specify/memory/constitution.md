@@ -1,13 +1,15 @@
 <!--
 Sync Impact Report
-- Version change: template (unratified) → 1.0.0
-- Modified principles: N/A (initial ratification, filled from template placeholders)
-- Added sections: Technology Stack (Locked Decisions), Project Structure
+- Version change: 1.2.0 → 1.3.0
+- Modified principles: I. Python-Only Stack — mở rộng phạm vi rõ ràng (backend/
+  pipeline vẫn Python-only, thêm ngoại lệ tường minh cho frontend web UI chạy
+  trong browser), không phải backward-incompatible redefinition nên MINOR
+- Added sections: none (bảng Technology Stack thêm 2 dòng; Project Structure
+  thêm nhánh web/)
 - Removed sections: none
-- Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ no changes needed (generic Constitution Check gate, fills per-feature)
-  - .specify/templates/spec-template.md ✅ no changes needed (generic, technology-agnostic by design)
-  - .specify/templates/tasks-template.md ✅ no changes needed (generic phase structure)
+- Added technology: FastAPI (Web UI Backend), ReactJS (Web UI Frontend) — phục
+  vụ feature 002-web-ui
+- Templates requiring updates: không có template nào cần đổi
 - Follow-up TODOs: none
 -->
 
@@ -15,11 +17,19 @@ Sync Impact Report
 
 ## Core Principles
 
-### I. Python-Only Stack
-Toàn bộ pipeline (download, ASR, script gen, TTS, merge) MUST được viết bằng Python.
-Không dùng Node.js hay ngôn ngữ khác cho runtime logic. Rationale: các model AI cốt
-lõi (ASR, TTS, video inpainting) đều native Python/PyTorch; một stack duy nhất giảm
-chi phí bảo trì và tránh phải viết sidecar/bridge giữa 2 runtime.
+### I. Python-Only Stack (Backend & Pipeline)
+Toàn bộ pipeline xử lý media (download, ASR, script gen, TTS, merge) VÀ mọi
+backend/API MUST được viết bằng Python. Không dùng Node.js hay ngôn ngữ khác cho
+runtime logic ở tầng backend/pipeline. Rationale: các model AI cốt lõi (ASR, TTS,
+video inpainting) đều native Python/PyTorch; một stack duy nhất giảm chi phí bảo
+trì và tránh phải viết sidecar/bridge giữa 2 runtime.
+
+Ngoại lệ tường minh: frontend web UI — chạy trong trình duyệt người dùng, không
+phải runtime của pipeline — được phép dùng ReactJS (xem Technology Stack).
+Node.js/npm ở tầng này chỉ là build-time tooling để biên dịch React thành static
+JS/HTML/CSS, không phải runtime xử lý media/pipeline, nên không vi phạm tinh
+thần nguyên tắc này. Backend phục vụ frontend (API, orchestration) vẫn MUST là
+Python.
 
 ### II. Source-First, Fallback-Ready Downloading
 Douyin và TikTok là nguồn ưu tiên hàng đầu. Download MUST dùng f2 (Johnserf-Seed)
@@ -44,6 +54,27 @@ Tránh thêm framework/plugin/skill nặng không cần thiết ngoài Spec Kit 
 nhu cầu cụ thể được xác nhận. Constitution, spec, plan MUST giữ ngắn gọn, đúng
 trọng tâm, không lặp lại thông tin đã có ở artifact khác.
 
+### VI. Agentic Harness Discipline (NON-NEGOTIABLE)
+Dự án này được build hoàn toàn qua AI agent (Claude Code lên plan, Antigravity thực
+thi code) — quy trình vận hành 2 agent này MUST tuân theo kỷ luật kỹ thuật nghiêm
+ngặt, không "vibe coding":
+- Mọi task trong tasks.md MUST đủ nhỏ để một agent hoàn thành và verify độc lập
+  trong một lượt; không gộp nhiều thay đổi lớn không kiểm soát được vào một task.
+- Agent thực thi code (Antigravity) MUST bám theo đúng spec.md/plan.md/tasks.md đã
+  chốt; nếu phát sinh nhu cầu đổi phạm vi/kiến trúc, MUST quay lại amend spec/plan
+  trước, không tự ý lệch khỏi artifact đã duyệt.
+- Một task chỉ được đánh dấu hoàn thành sau khi verify được bằng bằng chứng cụ thể
+  (chạy thử thành công, log/output kiểm tra được, hoặc test pass) — không chấp
+  nhận "trông có vẻ đúng".
+- Trạng thái mỗi job/run pipeline MUST truy vết được qua file trung gian (xem
+  Project Structure) để agent hoặc người ở bước sau audit lại được quyết định của
+  bước trước.
+
+Rationale: khi hai agent khác nhau chia nhau việc lên plan và viết code, thiếu kỷ
+luật harness sẽ dẫn tới lệch phạm vi, task không verify được, và mất khả năng audit
+— đây là vấn đề cốt lõi mà kỷ luật "agentic engineering" giải quyết bằng quy trình
+rõ ràng thay vì tin tưởng agent tự giác.
+
 ## Technology Stack (Locked Decisions)
 
 | Bước | Công nghệ | Ghi chú |
@@ -51,9 +82,12 @@ trọng tâm, không lặp lại thông tin đã có ở artifact khác.
 | Download | f2 (chính), yt-dlp (fallback) | Ưu tiên Douyin/TikTok, watermark-free từ nguồn |
 | Cleanup watermark/hardsub | video-subtitle-remover | On-demand, xem Principle III |
 | ASR | faster-whisper | Dùng khi cần transcript/timestamp để dịch |
-| Script gen (dịch/viết lại) | LLM qua 9router | OpenAI-compatible endpoint `http://localhost:20128/v1`, SDK `openai` |
+| Script gen (dịch/viết lại) | LLM qua 9router | OpenAI-compatible, SDK `openai`. Endpoint/key/model đọc từ `.env`: `ROUTER_BASE_URL` (đã gồm `/v1`), `ROUTER_API_KEY`, `ROUTER_MODEL` — xem `.env.example` |
 | TTS | edge-tts | Lựa chọn hiện tại: free, không cần GPU. VietTTS (voice cloning tiếng Việt tự nhiên hơn) là hướng nâng cấp sau, không bắt buộc ngay |
+| Tách nhạc nền | Demucs (two-stems: vocals/no_vocals) | Tách audio gốc để giữ nhạc nền, bỏ giọng nói gốc, trộn với voice mới ở bước merge. Chạy CPU, chấp nhận tốn thêm thời gian xử lý (xem SC-002 đã nới trong spec); lỗi tách KHÔNG được chặn pipeline — fallback về mute toàn bộ audio gốc như hành vi cũ nếu Demucs lỗi |
 | Ghép video | ffmpeg | Qua subprocess hoặc ffmpeg-python |
+| Web UI Backend | FastAPI (Python) | Expose API cho React frontend: submit job, poll trạng thái/% tiến trình, danh sách job, resume job lỗi (feature 002-web-ui). Gọi lại các module pipeline hiện có, không viết lại logic xử lý media |
+| Web UI Frontend | ReactJS | Chạy trong browser, gọi Web UI Backend qua HTTP. Node.js/npm chỉ là build-time tooling (xem Principle I), không phải runtime pipeline |
 
 Thay đổi bất kỳ dòng nào trong bảng này MUST đi qua amend constitution (Governance),
 không được đổi ngầm trong plan.md của từng feature.
@@ -67,21 +101,25 @@ media-generation/
   asr/               # faster-whisper
   script_gen/        # gọi 9router
   tts/               # edge-tts
-  merge/             # ffmpeg
+  merge/             # ffmpeg + Demucs (tách/giữ nhạc nền)
   pipeline.py        # điều phối tuần tự, lưu state theo job
-  jobs/{job_id}/      # file trung gian: source.mp4, transcript.json, script.json, voice.wav, output.mp4
+  jobs/{job_id}/      # file trung gian: source.mp4, transcript.json, script.json, voice.wav, background.wav, output.mp4
+  web/
+    backend/          # FastAPI, gọi lại pipeline.py/module hiện có qua import
+    frontend/          # ReactJS SPA (feature 002-web-ui)
 ```
 
 ## Governance
 
 Constitution này supersedes mọi quyết định kỹ thuật ad-hoc trong spec/plan. Thay đổi
 công nghệ đã "chốt" (bảng Technology Stack) MUST đi qua amend constitution trước,
-không sửa trực tiếp trong plan.md của từng feature. Mọi spec/plan MUST được review
-đối chiếu 5 Core Principles ở trên trước khi implement (Constitution Check gate
-trong plan-template.md).
+không sửa trực tiếp trong plan.md của từng feature. Mọi spec/plan/tasks MUST được
+review đối chiếu 6 Core Principles ở trên trước khi implement (Constitution Check
+gate trong plan-template.md), bao gồm cả việc Antigravity tuân thủ Principle VI khi
+thực thi tasks.md.
 
 Versioning theo semver: MAJOR khi đổi framework nền tảng (vd đổi ngôn ngữ khỏi
 Python); MINOR khi thêm/đổi 1 công nghệ trong bảng Technology Stack hoặc thêm
 principle mới; PATCH khi chỉnh sửa câu chữ/làm rõ nghĩa không đổi quy tắc.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-25
+**Version**: 1.3.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-26

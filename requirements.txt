@@ -1,0 +1,26 @@
+# ── Downloader ──────────────────────────────────────────────────────────────
+f2>=0.0.1.7             # Douyin/TikTok watermark-free download (engine chính)
+yt-dlp>=2024.1.1        # YouTube + fallback cho các nguồn f2 không hỗ trợ
+
+# ── ASR / Speech-to-Text ────────────────────────────────────────────────────
+faster-whisper>=1.0.0   # Faster CPU/GPU inference for Whisper (ASR)
+
+# ── LLM / Script Generation ─────────────────────────────────────────────────
+openai>=1.30.0          # SDK gọi 9router (OpenAI-compatible endpoint)
+
+# ── TTS / Text-to-Speech ────────────────────────────────────────────────────
+edge-tts>=6.1.9         # Microsoft Edge TTS (vi-VN-NamMinhNeural default)
+
+# ── Video Processing ─────────────────────────────────────────────────────────
+ffmpeg-python>=0.2.0    # Python wrapper cho ffmpeg subprocess calls
+demucs==4.0.1             # Tách vocal/nhạc nền (two-stems), giữ nhạc nền khi merge (FR-009)
+                          # Ghim 4.0.1 (không 4.1.x) để tránh dependency "sphn" cần build Rust từ source
+
+# ── Utilities ───────────────────────────────────────────────────────────────
+httpx>=0.27.0           # HTTP client (dùng trong f2/yt-dlp internally)
+python-dotenv>=1.0.0    # Load ROUTER_BASE_URL/ROUTER_API_KEY/ROUTER_MODEL từ .env
+
+# ── Web UI (feature 002-web-ui) ────────────────────────────────────────────
+fastapi>=0.110.0         # Backend API cho React frontend
+uvicorn>=0.29.0          # ASGI server chạy FastAPI
+itsdangerous>=2.2.0      # Ký/verify session cookie đăng nhập (7 ngày)

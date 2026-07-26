@@ -1,0 +1,81 @@
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  text-align: left;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+form input,
+form select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+form button {
+  font: inherit;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  color: #e5484d;
+}
+
+.job-progress {
+  margin-top: 24px;
+}
+
+.job-result video {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th,
+table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.warnings-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.warnings-list li {
+  color: #e5484d;
+  margin-bottom: 4px;
+}
