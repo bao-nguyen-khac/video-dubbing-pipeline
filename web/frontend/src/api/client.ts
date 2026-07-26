@@ -12,6 +12,8 @@ export interface JobSummary {
 
 export interface JobDetail extends JobSummary {
   script_mode: string;
+  dynamic_captions: boolean;
+  subtitles_burned: boolean;
   error: string | null;
   warnings: {
     watermark?: boolean;
@@ -20,6 +22,12 @@ export interface JobDetail extends JobSummary {
   };
   output_video_url: string | null;
   can_retry: boolean;
+}
+
+export interface Voice {
+  provider: "edge-tts" | "lucyai" | "router-tts";
+  voice_id: string;
+  name: string;
 }
 
 export class ApiError extends Error {
@@ -75,10 +83,22 @@ export function logout() {
   return request<{ ok: boolean }>("/api/logout", { method: "POST" });
 }
 
-export function submitJob(url: string, scriptMode: "translate" | "rewrite") {
+export function submitJob(
+  url: string,
+  scriptMode: "translate" | "rewrite" | "subtitle",
+  dynamicCaptions: boolean = false,
+  ttsProvider?: string,
+  voiceId?: string,
+) {
   return request<{ job_id: string }>("/api/jobs", {
     method: "POST",
-    body: JSON.stringify({ url, script_mode: scriptMode }),
+    body: JSON.stringify({
+      url,
+      script_mode: scriptMode,
+      dynamic_captions: dynamicCaptions,
+      ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
+      ...(voiceId ? { voice_id: voiceId } : {}),
+    }),
   });
 }
 
@@ -96,4 +116,31 @@ export function retryJob(jobId: string) {
 
 export function outputUrl(jobId: string) {
   return `/api/jobs/${jobId}/output`;
+}
+
+export function listVoices() {
+  return request<{ voices: Voice[] }>("/api/voices");
+}
+
+export async function previewVoice(provider: string, voiceId: string): Promise<Blob> {
+  const res = await fetch("/api/voices/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ provider, voice_id: voiceId }),
+  });
+
+  if (res.status === 401) {
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+    throw new ApiError(401, null);
+  }
+
+  if (!res.ok) {
+    const body = await safeJson(res);
+    throw new ApiError(res.status, body);
+  }
+
+  return res.blob();
 }

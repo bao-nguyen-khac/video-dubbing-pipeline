@@ -68,7 +68,12 @@ def extract_background_music(source_video_path: str | Path, job_dir: Path) -> Pa
         shutil.copy(no_vocals_path, background_path)
         return background_path
 
-    except (subprocess.TimeoutExpired, OSError) as e:
+    except (subprocess.TimeoutExpired, OSError, RuntimeError) as e:
+        # RuntimeError: _extract_audio_hq() raise khi ffmpeg tách audio lỗi
+        # (VD source.mp4 hỏng) — phải bắt ở đây để giữ đúng cam kết "lỗi ở
+        # module này không được raise chặn pipeline" (xem docstring), nếu
+        # không job sẽ fail toàn bộ thay vì fallback mute + cảnh báo (FR-003
+        # của 003-dubbing-fixes-subtitles, phát hiện khi verify US1)
         print(f"[vocal_separator] Lỗi chạy Demucs: {e}")
         return None
     finally:

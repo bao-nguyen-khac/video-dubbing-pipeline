@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getJob, outputUrl, submitJob, type JobDetail } from "../api/client";
+import {
+  ApiError,
+  getJob,
+  listVoices,
+  outputUrl,
+  previewVoice,
+  submitJob,
+  type JobDetail,
+  type Voice,
+} from "../api/client";
 
 // Polling 3s — đủ đáp ứng SC-002 (phản ánh đúng trong 10s), tránh WebSocket
 // không cần thiết (research.md → Cập nhật tiến trình phía frontend)
@@ -8,13 +17,46 @@ const POLL_INTERVAL_MS = 3000;
 
 const TERMINAL_STATUSES = new Set(["done", "failed"]);
 
+// Nhãn hiển thị cho provider — "lucyai" hiện là "Vivibe" (tên người dùng
+// biết tới), khác định danh nội bộ khớp API thật (004, research.md §2)
+const PROVIDER_LABELS: Record<string, string> = {
+  "edge-tts": "edge-tts",
+  lucyai: "Vivibe",
+  "router-tts": "9router",
+};
+
+function voiceKey(v: Voice) {
+  return `${v.provider}|${v.voice_id}`;
+}
+
 export default function HomePage() {
   const [url, setUrl] = useState("");
-  const [scriptMode, setScriptMode] = useState<"translate" | "rewrite">("translate");
+  const [scriptMode, setScriptMode] = useState<"translate" | "rewrite" | "subtitle">("translate");
+  const [dynamicCaptions, setDynamicCaptions] = useState(false);
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [selectedVoiceKey, setSelectedVoiceKey] = useState<string>("");
   const [job, setJob] = useState<JobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    listVoices()
+      .then((res) => {
+        setVoices(res.voices);
+        if (res.voices.length > 0) {
+          setSelectedVoiceKey(voiceKey(res.voices[0]));
+        }
+      })
+      .catch(() => {
+        // Không chặn form nếu lấy danh sách giọng lỗi — vẫn dùng được job
+        // với giọng mặc định (FR-003 áp dụng tinh thần tương tự)
+      });
+  }, []);
 
   function stopPolling() {
     if (pollRef.current !== null) {
@@ -45,7 +87,14 @@ export default function HomePage() {
     setError(null);
     setSubmitting(true);
     try {
-      const { job_id } = await submitJob(url, scriptMode);
+      const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
+      const { job_id } = await submitJob(
+        url,
+        scriptMode,
+        scriptMode !== "subtitle" && dynamicCaptions,
+        scriptMode !== "subtitle" ? selectedVoice?.provider : undefined,
+        scriptMode !== "subtitle" ? selectedVoice?.voice_id : undefined,
+      );
       const detail = await getJob(job_id);
       setJob(detail);
       startPolling(job_id);
@@ -58,6 +107,32 @@ export default function HomePage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handlePreview() {
+    const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
+    if (!selectedVoice) return;
+
+    setPreviewError(null);
+    setPreviewing(true);
+    try {
+      const blob = await previewVoice(selectedVoice.provider, selectedVoice.voice_id);
+      // Dọn URL cũ trước khi tạo URL mới, tránh rò rỉ bộ nhớ khi nghe thử
+      // nhiều giọng liên tiếp (Acceptance Scenario 3, US2)
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      previewUrlRef.current = objectUrl;
+      if (audioRef.current) {
+        audioRef.current.src = objectUrl;
+        await audioRef.current.play();
+      }
+    } catch (err) {
+      setPreviewError(err instanceof ApiError ? err.message : "Nghe thử thất bại");
+    } finally {
+      setPreviewing(false);
     }
   }
 
@@ -85,13 +160,54 @@ export default function HomePage() {
           Chế độ kịch bản
           <select
             value={scriptMode}
-            onChange={(e) => setScriptMode(e.target.value as "translate" | "rewrite")}
+            onChange={(e) => setScriptMode(e.target.value as "translate" | "rewrite" | "subtitle")}
             disabled={isBusy || submitting}
           >
-            <option value="translate">Dịch</option>
-            <option value="rewrite">Tự soạn</option>
+            <option value="translate">Dịch chuẩn (lồng tiếng)</option>
+            <option value="rewrite">Sáng tạo (lồng tiếng)</option>
+            <option value="subtitle">Phụ đề tự động (giữ âm thanh gốc)</option>
           </select>
         </label>
+        {scriptMode !== "subtitle" && (
+          <label>
+            Giọng đọc
+            <div className="voice-picker">
+              <select
+                value={selectedVoiceKey}
+                onChange={(e) => setSelectedVoiceKey(e.target.value)}
+                disabled={isBusy || submitting || voices.length === 0}
+              >
+                {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
+                {voices.map((v) => (
+                  <option key={voiceKey(v)} value={voiceKey(v)}>
+                    {v.name} ({PROVIDER_LABELS[v.provider] ?? v.provider})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handlePreview}
+                disabled={previewing || !selectedVoiceKey}
+              >
+                {previewing ? "Đang tải..." : "Nghe thử"}
+              </button>
+            </div>
+            {previewError && <span className="error">{previewError}</span>}
+          </label>
+        )}
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <audio ref={audioRef} hidden />
+        {scriptMode !== "subtitle" && (
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={dynamicCaptions}
+              onChange={(e) => setDynamicCaptions(e.target.checked)}
+              disabled={isBusy || submitting}
+            />
+            Phụ đề động (chữ khớp nhịp giọng đọc)
+          </label>
+        )}
         <button type="submit" disabled={isBusy || submitting}>
           {submitting ? "Đang gửi..." : "Chạy"}
         </button>

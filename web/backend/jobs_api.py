@@ -101,6 +101,11 @@ def _job_to_detail(job: dict) -> dict:
     detail.update(
         {
             "script_mode": job["script_mode"],
+            # .get() vì job.json tạo trước feature 003/004 chưa có field này
+            "dynamic_captions": job.get("dynamic_captions", False),
+            "subtitles_burned": job.get("subtitles_burned", False),
+            "tts_provider": job.get("tts_provider", "edge-tts"),
+            "voice_id": job.get("voice_id"),
             "error": job.get("error"),
             "warnings": job.get("warnings", {}),
             "output_video_url": f"/api/jobs/{job['job_id']}/output" if has_output else None,
@@ -112,14 +117,20 @@ def _job_to_detail(job: dict) -> dict:
 
 class SubmitJobRequest(BaseModel):
     url: str
-    script_mode: str  # "translate" | "rewrite"
+    script_mode: str  # "translate" | "rewrite" | "subtitle"
+    dynamic_captions: bool = False
+    tts_provider: str = "edge-tts"
+    voice_id: str | None = None
 
 
 @router.post("", status_code=201)
 async def submit_job(body: SubmitJobRequest):
     """POST /api/jobs — submit job mới (FR-001, FR-002, FR-009, contracts/api.md)."""
-    if body.script_mode not in ("translate", "rewrite"):
-        return _error(400, "script_mode phải là 'translate' hoặc 'rewrite'")
+    if body.script_mode not in ("translate", "rewrite", "subtitle"):
+        return _error(400, "script_mode phải là 'translate', 'rewrite' hoặc 'subtitle'")
+
+    if body.tts_provider not in ("edge-tts", "lucyai", "router-tts"):
+        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'router-tts'")
 
     try:
         platform = detect_platform(body.url)
@@ -130,8 +141,22 @@ async def submit_job(body: SubmitJobRequest):
     if running_job_id:
         return _error(409, "Đang có job xử lý, vui lòng chờ", running_job_id=running_job_id)
 
-    job = create_job(body.url, platform, body.script_mode)
-    start_job(body.url, body.script_mode, job["job_id"])
+    job = create_job(
+        body.url,
+        platform,
+        body.script_mode,
+        dynamic_captions=body.dynamic_captions,
+        tts_provider=body.tts_provider,
+        voice_id=body.voice_id,
+    )
+    start_job(
+        body.url,
+        body.script_mode,
+        job["job_id"],
+        dynamic_captions=body.dynamic_captions,
+        tts_provider=body.tts_provider,
+        voice_id=body.voice_id,
+    )
     return {"job_id": job["job_id"]}
 
 
@@ -189,5 +214,12 @@ async def retry_job(job_id: str):
     if running_job_id:
         return _error(409, "Đang có job khác xử lý, vui lòng chờ", running_job_id=running_job_id)
 
-    start_job(job["source_url"], job["script_mode"], job_id)
+    start_job(
+        job["source_url"],
+        job["script_mode"],
+        job_id,
+        dynamic_captions=job.get("dynamic_captions", False),
+        tts_provider=job.get("tts_provider", "edge-tts"),
+        voice_id=job.get("voice_id"),
+    )
     return {"job_id": job_id}

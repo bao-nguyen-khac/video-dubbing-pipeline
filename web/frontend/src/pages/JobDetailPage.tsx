@@ -8,6 +8,12 @@ const WARNING_LABELS: Record<string, string> = {
   background_music_lost: "Không giữ được nhạc nền gốc (đã mute toàn bộ audio gốc)",
 };
 
+const SCRIPT_MODE_LABELS: Record<string, string> = {
+  translate: "Dịch chuẩn (lồng tiếng)",
+  rewrite: "Sáng tạo (lồng tiếng)",
+  subtitle: "Phụ đề tự động (giữ âm thanh gốc)",
+};
+
 const TERMINAL_STATUSES = new Set(["done", "failed"]);
 // Cùng nhịp poll với HomePage (research.md → Cập nhật tiến trình phía frontend)
 const POLL_INTERVAL_MS = 3000;
@@ -68,6 +74,11 @@ export default function JobDetailPage() {
   const activeWarnings = job
     ? Object.entries(job.warnings || {}).filter(([, value]) => value)
     : [];
+  // Phụ đề động được yêu cầu (dynamic_captions) nhưng burn thất bại — cảnh
+  // báo riêng vì đây không phải field trong job.warnings (FR-003, US4: burn
+  // lỗi không fail job, chỉ mất caption, nhưng người dùng phải thấy rõ)
+  const dynamicCaptionsFailed =
+    job?.status === "done" && job.dynamic_captions && !job.subtitles_burned;
 
   return (
     <div className="page job-detail-page">
@@ -88,8 +99,9 @@ export default function JobDetailPage() {
             <strong>Nền tảng:</strong> {job.platform}
           </p>
           <p>
-            <strong>Chế độ kịch bản:</strong>{" "}
-            {job.script_mode === "translate" ? "Dịch" : "Tự soạn"}
+            <strong>Chế độ xử lý:</strong>{" "}
+            {SCRIPT_MODE_LABELS[job.script_mode] ?? job.script_mode}
+            {job.dynamic_captions && " + Phụ đề động"}
           </p>
           <p>
             <strong>Trạng thái:</strong> {job.status} ({job.progress_percent}%)
@@ -105,13 +117,19 @@ export default function JobDetailPage() {
             </button>
           )}
 
-          {activeWarnings.length > 0 && (
+          {(activeWarnings.length > 0 || dynamicCaptionsFailed) && (
             <div>
               <strong>Cảnh báo chất lượng:</strong>
               <ul className="warnings-list">
                 {activeWarnings.map(([key]) => (
                   <li key={key}>{WARNING_LABELS[key] ?? key}</li>
                 ))}
+                {dynamicCaptionsFailed && (
+                  <li>
+                    Đã yêu cầu phụ đề động nhưng không burn được — video vẫn
+                    có giọng lồng tiếng bình thường, chỉ thiếu phụ đề
+                  </li>
+                )}
               </ul>
             </div>
           )}

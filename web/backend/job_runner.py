@@ -10,7 +10,14 @@ import threading
 from pipeline import run_pipeline
 
 
-def start_job(url: str, script_mode: str, job_id: str | None = None) -> None:
+def start_job(
+    url: str,
+    script_mode: str,
+    job_id: str | None = None,
+    dynamic_captions: bool = False,
+    tts_provider: str = "edge-tts",
+    voice_id: str | None = None,
+) -> None:
     """
     Spawn một daemon thread chạy pipeline.run_pipeline(). Không trả về gì —
     tiến trình job được theo dõi qua jobs/{job_id}/job.json, không qua giá trị
@@ -18,20 +25,34 @@ def start_job(url: str, script_mode: str, job_id: str | None = None) -> None:
     """
     thread = threading.Thread(
         target=_run_and_swallow_exit,
-        args=(url, script_mode, job_id),
+        args=(url, script_mode, job_id, dynamic_captions, tts_provider, voice_id),
         daemon=True,
     )
     thread.start()
 
 
-def _run_and_swallow_exit(url: str, script_mode: str, job_id: str | None) -> None:
+def _run_and_swallow_exit(
+    url: str,
+    script_mode: str,
+    job_id: str | None,
+    dynamic_captions: bool = False,
+    tts_provider: str = "edge-tts",
+    voice_id: str | None = None,
+) -> None:
     """
     run_pipeline() tự gọi sys.exit() khi hoàn tất/lỗi (thiết kế cho CLI). Trong
     thread nền, SystemExit chỉ dừng thread đó — "nuốt" nó ở đây để tránh in
     traceback thừa; trạng thái thật luôn nằm trong job.json.
     """
     try:
-        run_pipeline(url, script_mode, job_id)
+        run_pipeline(
+            url,
+            script_mode,
+            job_id,
+            dynamic_captions=dynamic_captions,
+            tts_provider=tts_provider,
+            voice_id=voice_id,
+        )
     except SystemExit:
         pass
     except Exception as e:

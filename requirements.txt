@@ -15,6 +15,9 @@ edge-tts>=6.1.9         # Microsoft Edge TTS (vi-VN-NamMinhNeural default)
 ffmpeg-python>=0.2.0    # Python wrapper cho ffmpeg subprocess calls
 demucs==4.0.1             # Tách vocal/nhạc nền (two-stems), giữ nhạc nền khi merge (FR-009)
                           # Ghim 4.0.1 (không 4.1.x) để tránh dependency "sphn" cần build Rust từ source
+torchcodec                # Bắt buộc để torchaudio.save() hoạt động (demucs lưu kết quả tách nhạc) —
+                          # thiếu package này khiến Demucs luôn fail ở bước lưu file (root cause đã
+                          # verify thật, xem specs/003-dubbing-fixes-subtitles/research.md §1)
 
 # ── Utilities ───────────────────────────────────────────────────────────────
 httpx>=0.27.0           # HTTP client (dùng trong f2/yt-dlp internally)

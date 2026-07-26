@@ -61,8 +61,20 @@ def create_job(
     platform: str,
     script_mode: str,
     job_id: str | None = None,
+    dynamic_captions: bool = False,
+    tts_provider: str = "edge-tts",
+    voice_id: str | None = None,
 ) -> dict:
-    """Tạo job mới và ghi job.json vào jobs/{job_id}/."""
+    """Tạo job mới và ghi job.json vào jobs/{job_id}/.
+
+    dynamic_captions (003-dubbing-fixes-subtitles, US4): chỉ có ý nghĩa khi
+    script_mode là 'translate'/'rewrite'; không áp dụng với 'subtitle' (phụ
+    đề đã luôn bật ở mode đó, xem data-model.md).
+
+    tts_provider/voice_id (004-voice-selection-preview): chỉ có ý nghĩa khi
+    script_mode là 'translate'/'rewrite'. voice_id=None → bước synthesizing
+    tự resolve về giọng mặc định của provider tương ứng.
+    """
     jid = job_id or str(uuid.uuid4())
     job_dir = JOBS_DIR / jid
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -72,6 +84,9 @@ def create_job(
         "source_url": url,
         "platform": platform,
         "script_mode": script_mode,
+        "dynamic_captions": dynamic_captions,
+        "tts_provider": tts_provider,
+        "voice_id": voice_id,
         "status": "pending",
         "error": None,
         "artifacts": {
@@ -118,10 +133,15 @@ def update_job_status(
     error: str | None = None,
     artifacts_update: dict | None = None,
     warnings_update: dict | None = None,
+    extra_update: dict | None = None,
 ) -> dict:
     """
     Cập nhật trạng thái job với validation state transition.
     Raises ValueError nếu transition không hợp lệ.
+
+    extra_update (003-dubbing-fixes-subtitles): merge trực tiếp vào top-level
+    job dict — dùng cho field không thuộc artifacts/warnings, VD
+    `subtitles_burned` (US3/US4).
     """
     job = read_job(job_id)
     current = job["status"]
@@ -140,6 +160,8 @@ def update_job_status(
         job["artifacts"].update(artifacts_update)
     if warnings_update:
         job["warnings"].update(warnings_update)
+    if extra_update:
+        job.update(extra_update)
 
     _write_job(job_id, job)
     return job
@@ -223,8 +245,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--script-mode",
         dest="script_mode",
         required=True,
-        choices=["translate", "rewrite"],
-        help="Chế độ tạo kịch bản: 'translate' (dịch) hoặc 'rewrite' (tự soạn)",
+        choices=["translate", "rewrite", "subtitle"],
+        help=(
+            "Chế độ xử lý: 'translate' (dịch lồng tiếng), 'rewrite' (tự soạn "
+            "lồng tiếng), hoặc 'subtitle' (giữ nguyên âm thanh gốc, chỉ thêm "
+            "phụ đề — 003-dubbing-fixes-subtitles)"
+        ),
+    )
+    parser.add_argument(
+        "--dynamic-captions",
+        dest="dynamic_captions",
+        action="store_true",
+        help=(
+            "Thêm phụ đề động khớp nhịp giọng đọc (chỉ có tác dụng với "
+            "--script-mode translate/rewrite; bị bỏ qua với subtitle) — "
+            "003-dubbing-fixes-subtitles"
+        ),
+    )
+    parser.add_argument(
+        "--tts-provider",
+        dest="tts_provider",
+        default="edge-tts",
+        choices=["edge-tts", "lucyai", "router-tts"],
+        help=(
+            "Provider TTS: 'edge-tts' (mặc định, free), 'lucyai' (Vivibe, cần "
+            "VIVIBE_API_KEY trong .env), hoặc 'router-tts' (giọng Gemini qua "
+            "9router, tái dùng ROUTER_API_KEY có sẵn) — chỉ áp dụng với "
+            "--script-mode translate/rewrite — 004-voice-selection-preview"
+        ),
+    )
+    parser.add_argument(
+        "--voice-id",
+        dest="voice_id",
+        default=None,
+        help=(
+            "Giọng đọc cụ thể (VD 'vi-VN-HoaiMyNeural' cho edge-tts, id giọng "
+            "trong tài khoản Vivibe cho lucyai, hoặc tên giọng Gemini VD "
+            "'Puck' cho router-tts); để trống → dùng giọng mặc định hiện có "
+            "— 004-voice-selection-preview"
+        ),
     )
     parser.add_argument(
         "--job-id",
@@ -238,10 +297,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ─── Pipeline Orchestrator (T013 — nối luồng sau khi các module sẵn sàng) ──
 
 
-def run_pipeline(url: str, script_mode: str, job_id: str | None = None) -> None:
+def run_pipeline(
+    url: str,
+    script_mode: str,
+    job_id: str | None = None,
+    dynamic_captions: bool = False,
+    tts_provider: str = "edge-tts",
+    voice_id: str | None = None,
+) -> None:
     """
     Điều phối pipeline end-to-end.
     Import các module chỉ khi cần để tránh crash khi chưa install dependency.
+
+    dynamic_captions (003-dubbing-fixes-subtitles, US4): chỉ áp dụng khi
+    script_mode là 'translate'/'rewrite', bị bỏ qua với 'subtitle'.
+
+    tts_provider/voice_id (004-voice-selection-preview): chỉ áp dụng khi
+    script_mode là 'translate'/'rewrite'.
     """
     # Lazy imports — tránh ImportError crash khi chạy --help
     from asr.transcriber import transcribe
@@ -250,9 +322,12 @@ def run_pipeline(url: str, script_mode: str, job_id: str | None = None) -> None:
     from env_check import run_checks
     from media_utils import get_media_duration
     from merge.ffmpeg_merge import merge_audio
+    from merge.subtitle_burner import burn_subtitles, write_srt
     from merge.vocal_separator import extract_background_music
-    from script_gen.router_client import generate_script
-    from tts.edge_tts_client import synthesize
+    from script_gen.router_client import generate_script, generate_subtitle_script
+    from tts.edge_tts_client import DEFAULT_VOICE, synthesize as edge_tts_synthesize
+    from tts.lucyai_client import synthesize_from_script as lucyai_synthesize
+    from tts.router_tts_client import synthesize_from_script as router_tts_synthesize
 
     # 0. Kiểm tra môi trường (T006, FR-008) — fail sớm, rõ ràng nếu thiếu ffmpeg/9router
     if not run_checks():
@@ -283,7 +358,14 @@ def run_pipeline(url: str, script_mode: str, job_id: str | None = None) -> None:
             print(f"[ERROR] Job không tồn tại: {job_id}", file=sys.stderr)
             sys.exit(1)
     else:
-        job = create_job(url, platform, script_mode)
+        job = create_job(
+            url,
+            platform,
+            script_mode,
+            dynamic_captions=dynamic_captions,
+            tts_provider=tts_provider,
+            voice_id=voice_id,
+        )
         job_id = job["job_id"]
         print(f"[pipeline] Tạo job mới {job_id}")
 
@@ -360,11 +442,20 @@ def run_pipeline(url: str, script_mode: str, job_id: str | None = None) -> None:
     if job["status"] == "scripting":
         print(f"[pipeline][{jid}] Bắt đầu scripting (mode={script_mode})...")
         try:
-            script_path = generate_script(
-                job["artifacts"]["transcript"],
-                job_dir,
-                mode=script_mode,
-            )
+            if script_mode == "subtitle":
+                # US3: dịch theo segment (giữ mốc thời gian ASR gốc) thay vì
+                # dịch nguyên khối — không cần source_duration (không TTS)
+                script_path = generate_subtitle_script(
+                    job["artifacts"]["transcript"], job_dir
+                )
+            else:
+                source_duration = get_media_duration(job["artifacts"]["source_video"])
+                script_path = generate_script(
+                    job["artifacts"]["transcript"],
+                    job_dir,
+                    mode=script_mode,
+                    source_duration=source_duration if source_duration > 0 else None,
+                )
             update_job_status(
                 jid,
                 "synthesizing",
@@ -379,55 +470,137 @@ def run_pipeline(url: str, script_mode: str, job_id: str | None = None) -> None:
     # ── Bước 5: TTS Synthesize ───────────────────────────────────────────────
     job = read_job(jid)
     if job["status"] == "synthesizing":
-        print(f"[pipeline][{jid}] Bắt đầu synthesizing (TTS)...")
-        try:
-            source_duration = get_media_duration(job["artifacts"]["source_video"])
-            voice_path, duration = synthesize(
-                job["artifacts"]["script"],
-                job_dir,
-                target_duration=source_duration if source_duration > 0 else None,
+        if script_mode == "subtitle":
+            # US3: giữ nguyên âm thanh gốc — không TTS, không tách nhạc nền,
+            # artifacts.voice_track giữ None có chủ đích (data-model.md)
+            print(f"[pipeline][{jid}] Bỏ qua TTS (chế độ Phụ đề tự động)")
+            update_job_status(jid, "merging")
+        else:
+            active_provider = job.get("tts_provider", "edge-tts")
+            # Chỉ edge-tts có giọng mặc định sẵn (2 giọng cố định); lucyai/
+            # router-tts bắt buộc người dùng chọn giọng cụ thể (không có
+            # "giọng mặc định" hợp lý cho tài khoản/catalog riêng của họ)
+            active_voice_id = job.get("voice_id") or (
+                DEFAULT_VOICE if active_provider == "edge-tts" else None
             )
-            update_job_status(
-                jid,
-                "merging",
-                artifacts_update={"voice_track": str(voice_path)},
-            )
-            print(f"[pipeline][{jid}] TTS xong: {voice_path} ({duration:.1f}s, video gốc {source_duration:.1f}s)")
-        except Exception as e:
-            fail_job(jid, "synthesizing", e)
-            print(f"[ERROR][{jid}] TTS thất bại: {e}", file=sys.stderr)
-            sys.exit(2)
+            print(f"[pipeline][{jid}] Bắt đầu synthesizing (provider={active_provider}, voice={active_voice_id})...")
+            try:
+                source_duration = get_media_duration(job["artifacts"]["source_video"])
+                target_duration = source_duration if source_duration > 0 else None
+
+                if active_provider == "lucyai":
+                    import os
+
+                    api_key = os.environ.get("VIVIBE_API_KEY", "")
+                    voice_path, duration = lucyai_synthesize(
+                        job["artifacts"]["script"],
+                        job_dir,
+                        voice_id=active_voice_id,
+                        api_key=api_key,
+                        target_duration=target_duration,
+                    )
+                elif active_provider == "router-tts":
+                    voice_path, duration = router_tts_synthesize(
+                        job["artifacts"]["script"],
+                        job_dir,
+                        voice_id=active_voice_id,
+                        target_duration=target_duration,
+                    )
+                else:
+                    voice_path, duration = edge_tts_synthesize(
+                        job["artifacts"]["script"],
+                        job_dir,
+                        voice=active_voice_id,
+                        target_duration=target_duration,
+                        collect_captions=dynamic_captions,
+                    )
+
+                update_job_status(
+                    jid,
+                    "merging",
+                    artifacts_update={"voice_track": str(voice_path)},
+                )
+                print(f"[pipeline][{jid}] TTS xong: {voice_path} ({duration:.1f}s, video gốc {source_duration:.1f}s)")
+            except Exception as e:
+                fail_job(jid, "synthesizing", e)
+                print(f"[ERROR][{jid}] TTS thất bại: {e}", file=sys.stderr)
+                sys.exit(2)
 
     # ── Bước 6: Merge (kèm tách/giữ nhạc nền trước khi ghép, FR-009) ─────────
     job = read_job(jid)
     if job["status"] == "merging":
         print(f"[pipeline][{jid}] Bắt đầu merging (ffmpeg)...")
         try:
-            background_path = extract_background_music(job["artifacts"]["source_video"], job_dir)
-            if background_path is None:
-                print(f"[pipeline][{jid}] ⚠ Không tách được nhạc nền, audio gốc sẽ bị mute hoàn toàn")
+            if script_mode == "subtitle":
+                # US3: burn phụ đề trực tiếp lên source.mp4, audio giữ nguyên
+                # 100% — lỗi burn KHÔNG có fallback, để lan lên fail_job()
+                # (FR-003: đây là toàn bộ giá trị của mode này, khác US4)
+                output_path = job_dir / "output.mp4"
+                if not (output_path.exists() and output_path.stat().st_size > 0):
+                    with open(job["artifacts"]["script"], encoding="utf-8") as f:
+                        script_data = json.load(f)
+                    cues = [
+                        {"start": c["start"], "end": c["end"], "text": c["translated_text"]}
+                        for c in script_data.get("segments", [])
+                    ]
+                    srt_path = write_srt(cues, job_dir / "subtitles.srt")
+                    output_path = burn_subtitles(
+                        job["artifacts"]["source_video"], srt_path, output_path
+                    )
+                update_job_status(
+                    jid,
+                    "done",
+                    artifacts_update={"output_video": str(output_path)},
+                    extra_update={"subtitles_burned": True},
+                )
+                print(f"[pipeline][{jid}] Merge xong (burn phụ đề): {output_path}")
+            else:
+                background_path = extract_background_music(job["artifacts"]["source_video"], job_dir)
+                if background_path is None:
+                    print(f"[pipeline][{jid}] ⚠ Không tách được nhạc nền, audio gốc sẽ bị mute hoàn toàn")
 
-            output_path, duration_mismatch, background_kept = merge_audio(
-                job["artifacts"]["source_video"],
-                job["artifacts"]["voice_track"],
-                job_dir,
-                background_audio_path=background_path,
-            )
-            update_job_status(
-                jid,
-                "done",
-                artifacts_update={
-                    "output_video": str(output_path),
-                    "background_audio": str(background_path) if background_path else None,
-                },
-                warnings_update={
-                    "duration_mismatch": duration_mismatch,
-                    "background_music_lost": not background_kept,
-                },
-            )
-            if duration_mismatch:
-                print(f"[pipeline][{jid}] ⚠ Cảnh báo: lệch thời lượng audio/video")
-            print(f"[pipeline][{jid}] Merge xong: {output_path} (nhạc nền: {'giữ' if background_kept else 'mất'})")
+                output_path, duration_mismatch, background_kept = merge_audio(
+                    job["artifacts"]["source_video"],
+                    job["artifacts"]["voice_track"],
+                    job_dir,
+                    background_audio_path=background_path,
+                )
+                subtitles_burned = False
+                if dynamic_captions:
+                    # US4: burn phụ đề động LÊN TRÊN kết quả đã ghép; lỗi ở
+                    # đây CHỈ cảnh báo, KHÔNG fail job (nội dung lồng tiếng
+                    # vẫn có giá trị dù thiếu caption, khác US3)
+                    captions_path = job_dir / "captions.json"
+                    if captions_path.exists():
+                        try:
+                            with open(captions_path, encoding="utf-8") as f:
+                                cues = json.load(f)
+                            srt_path = write_srt(cues, job_dir / "subtitles.srt")
+                            captioned_path = job_dir / "output_captioned.mp4.tmp"
+                            burn_subtitles(output_path, srt_path, captioned_path)
+                            captioned_path.replace(output_path)
+                            subtitles_burned = True
+                        except Exception as e:
+                            print(f"[pipeline][{jid}] ⚠ Burn phụ đề động thất bại, giữ output không caption: {e}")
+                    else:
+                        print(f"[pipeline][{jid}] ⚠ Không tìm thấy captions.json, bỏ qua phụ đề động")
+
+                update_job_status(
+                    jid,
+                    "done",
+                    artifacts_update={
+                        "output_video": str(output_path),
+                        "background_audio": str(background_path) if background_path else None,
+                    },
+                    warnings_update={
+                        "duration_mismatch": duration_mismatch,
+                        "background_music_lost": not background_kept,
+                    },
+                    extra_update={"subtitles_burned": subtitles_burned},
+                )
+                if duration_mismatch:
+                    print(f"[pipeline][{jid}] ⚠ Cảnh báo: lệch thời lượng audio/video")
+                print(f"[pipeline][{jid}] Merge xong: {output_path} (nhạc nền: {'giữ' if background_kept else 'mất'})")
         except Exception as e:
             fail_job(jid, "merging", e)
             print(f"[ERROR][{jid}] Merge thất bại: {e}", file=sys.stderr)
@@ -455,6 +628,9 @@ def main() -> None:
         url=args.url,
         script_mode=args.script_mode,
         job_id=args.job_id,
+        dynamic_captions=args.dynamic_captions,
+        tts_provider=args.tts_provider,
+        voice_id=args.voice_id,
     )
 
 

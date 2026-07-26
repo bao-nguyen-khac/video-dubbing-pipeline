@@ -1,14 +1,13 @@
 <!--
 Sync Impact Report
-- Version change: 1.2.0 → 1.3.0
-- Modified principles: I. Python-Only Stack — mở rộng phạm vi rõ ràng (backend/
-  pipeline vẫn Python-only, thêm ngoại lệ tường minh cho frontend web UI chạy
-  trong browser), không phải backward-incompatible redefinition nên MINOR
-- Added sections: none (bảng Technology Stack thêm 2 dòng; Project Structure
-  thêm nhánh web/)
+- Version change: 1.4.0 → 1.5.0
+- Modified principles: none
+- Added sections: none
 - Removed sections: none
-- Added technology: FastAPI (Web UI Backend), ReactJS (Web UI Frontend) — phục
-  vụ feature 002-web-ui
+- Modified technology: TTS — thêm provider thứ 3 "9router TTS" (giọng Gemini,
+  qua đúng endpoint OpenAI-compatible `/v1/audio/speech` của 9router đã dùng
+  cho script_gen) — tái dùng `ROUTER_BASE_URL`/`ROUTER_API_KEY` có sẵn, không
+  cần secret riêng, khác LucyAI/Vivibe phải có key riêng của người dùng
 - Templates requiring updates: không có template nào cần đổi
 - Follow-up TODOs: none
 -->
@@ -83,7 +82,7 @@ rõ ràng thay vì tin tưởng agent tự giác.
 | Cleanup watermark/hardsub | video-subtitle-remover | On-demand, xem Principle III |
 | ASR | faster-whisper | Dùng khi cần transcript/timestamp để dịch |
 | Script gen (dịch/viết lại) | LLM qua 9router | OpenAI-compatible, SDK `openai`. Endpoint/key/model đọc từ `.env`: `ROUTER_BASE_URL` (đã gồm `/v1`), `ROUTER_API_KEY`, `ROUTER_MODEL` — xem `.env.example` |
-| TTS | edge-tts | Lựa chọn hiện tại: free, không cần GPU. VietTTS (voice cloning tiếng Việt tự nhiên hơn) là hướng nâng cấp sau, không bắt buộc ngay |
+| TTS | edge-tts (mặc định) + LucyAI/Vivibe + 9router TTS (tuỳ chọn) | edge-tts: free, không cần GPU, không cần API key — vẫn là provider mặc định/fallback khi chưa cấu hình provider khác. LucyAI/Vivibe (`https://api.lucylab.io/json-rpc`, JSON-RPC qua 3 method `getUserVoices`/`ttsLongText`/`getExportStatus`, polling trạng thái, audio trả về WAV): cần `VIVIBE_API_KEY` riêng của người dùng. 9router TTS (`{ROUTER_BASE_URL}/audio/speech`, OpenAI-compatible, model dạng `gemini/gemini-3.1-flash-tts-preview/{voice}`, 30 giọng Gemini cố định — không có endpoint discovery): tái dùng `ROUTER_BASE_URL`/`ROUTER_API_KEY` đã có, không cần secret riêng; tham số `speed` API không đáng tin cậy (đã verify thật), khớp thời lượng bằng hậu xử lý ffmpeg `atempo` thay vì tham số API. Người dùng chọn provider + giọng đọc và nghe thử trên giao diện web trước khi chạy job. VietTTS (voice cloning) vẫn là hướng nâng cấp sau, không bắt buộc |
 | Tách nhạc nền | Demucs (two-stems: vocals/no_vocals) | Tách audio gốc để giữ nhạc nền, bỏ giọng nói gốc, trộn với voice mới ở bước merge. Chạy CPU, chấp nhận tốn thêm thời gian xử lý (xem SC-002 đã nới trong spec); lỗi tách KHÔNG được chặn pipeline — fallback về mute toàn bộ audio gốc như hành vi cũ nếu Demucs lỗi |
 | Ghép video | ffmpeg | Qua subprocess hoặc ffmpeg-python |
 | Web UI Backend | FastAPI (Python) | Expose API cho React frontend: submit job, poll trạng thái/% tiến trình, danh sách job, resume job lỗi (feature 002-web-ui). Gọi lại các module pipeline hiện có, không viết lại logic xử lý media |
@@ -100,7 +99,7 @@ media-generation/
   clean_video/       # video-subtitle-remover, gọi on-demand
   asr/               # faster-whisper
   script_gen/        # gọi 9router
-  tts/               # edge-tts
+  tts/               # edge-tts (mặc định) + LucyAI/Vivibe + 9router TTS (tuỳ chọn)
   merge/             # ffmpeg + Demucs (tách/giữ nhạc nền)
   pipeline.py        # điều phối tuần tự, lưu state theo job
   jobs/{job_id}/      # file trung gian: source.mp4, transcript.json, script.json, voice.wav, background.wav, output.mp4
@@ -122,4 +121,4 @@ Versioning theo semver: MAJOR khi đổi framework nền tảng (vd đổi ngôn
 Python); MINOR khi thêm/đổi 1 công nghệ trong bảng Technology Stack hoặc thêm
 principle mới; PATCH khi chỉnh sửa câu chữ/làm rõ nghĩa không đổi quy tắc.
 
-**Version**: 1.3.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-26
+**Version**: 1.5.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-26

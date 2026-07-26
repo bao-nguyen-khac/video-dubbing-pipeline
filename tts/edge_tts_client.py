@@ -26,6 +26,41 @@ _RATE_MAX_PCT = 40
 _RATE_ADJUST_TOLERANCE_SECONDS = 2.0
 
 
+def list_voices() -> list[dict]:
+    """
+    Lấy danh sách giọng đọc tiếng Việt có sẵn trong catalog edge-tts
+    (004-voice-selection-preview). Lấy động qua SDK thay vì hardcode, dù thực
+    tế hiện chỉ có 2 giọng (đã verify: `vi-VN-HoaiMyNeural`,
+    `vi-VN-NamMinhNeural` — research.md §1).
+
+    Returns:
+        List[{"voice_id": str, "name": str}]
+    """
+    voices = asyncio.run(_list_voices_async())
+    return [
+        {"voice_id": v["ShortName"], "name": v["FriendlyName"]}
+        for v in voices
+        if v["Locale"].startswith("vi-")
+    ]
+
+
+async def _list_voices_async() -> list[dict]:
+    import edge_tts
+
+    return await edge_tts.list_voices()
+
+
+def synthesize_text(text: str, voice: str, output_path: str | Path) -> Path:
+    """
+    Sinh audio trực tiếp từ 1 đoạn text ngắn (không qua script.json) — dùng
+    cho nghe thử (004-voice-selection-preview, US2), không phải luồng job
+    chính (xem synthesize()).
+    """
+    output_path = Path(output_path)
+    _synthesize_with_fallback(text, voice, output_path, rate="+0%")
+    return output_path
+
+
 # ─── Main Function ───────────────────────────────────────────────────────────
 
 
@@ -34,6 +69,7 @@ def synthesize(
     job_dir: Path,
     voice: str = DEFAULT_VOICE,
     target_duration: float | None = None,
+    collect_captions: bool = False,
 ) -> tuple[Path, float]:
     """
     Sinh file âm thanh từ script.json bằng edge-tts.
@@ -44,6 +80,9 @@ def synthesize(
         voice: Tên voice edge-tts (mặc định vi-VN-NamMinhNeural).
         target_duration: Thời lượng video gốc (giây) để chỉnh tốc độ đọc cho khớp
             gần đúng (FR-010). None hoặc <=0 → sinh ở tốc độ mặc định, không chỉnh.
+        collect_captions: Nếu True, thu thêm mốc thời gian theo câu/cụm từ
+            `SentenceBoundary` của edge-tts, ghi ra `jobs/{job_id}/captions.json`
+            (US4, 003-dubbing-fixes-subtitles, research.md §4).
 
     Returns:
         (voice_path, duration_seconds)
@@ -56,10 +95,17 @@ def synthesize(
     script_path = Path(script_path)
     job_dir = Path(job_dir)
     voice_path = job_dir / "voice.wav"
+    captions_path = job_dir / "captions.json"
 
-    # Resume: nếu voice.wav đã tồn tại và hợp lệ, bỏ qua
+    # Resume: nếu voice.wav đã tồn tại và hợp lệ, bỏ qua sinh lại. Vẫn có thể
+    # cần thu captions.json nếu job trước đó không bật dynamic_captions.
     if voice_path.exists() and voice_path.stat().st_size > 0:
         duration = get_media_duration(voice_path)
+        if collect_captions and not (captions_path.exists() and captions_path.stat().st_size > 0):
+            with open(script_path, encoding="utf-8") as f:
+                content = json.load(f).get("content", "").strip()
+            if content:
+                _collect_captions(content, voice, captions_path, rate="+0%")
         return voice_path, duration
 
     # Đọc kịch bản
@@ -81,6 +127,7 @@ def synthesize(
     # Lượt 1: sinh ở tốc độ mặc định
     _synthesize_with_fallback(content, voice, voice_path, rate="+0%")
     duration = get_media_duration(voice_path)
+    final_rate = "+0%"
 
     # Lượt 2 (FR-010): nếu lệch đáng kể so với video gốc, chỉnh rate rồi sinh lại.
     # Lỗi ở lượt này KHÔNG chặn pipeline — giữ nguyên bản lượt 1 nếu sinh lại lỗi.
@@ -94,10 +141,50 @@ def synthesize(
                 try:
                     _synthesize_with_fallback(content, voice, voice_path, rate=rate)
                     duration = get_media_duration(voice_path)
+                    final_rate = rate
                 except RuntimeError as e:
                     print(f"[edge_tts_client] Chỉnh rate={rate} thất bại ({e}), giữ bản tốc độ mặc định")
 
+    if collect_captions:
+        # Thu riêng 1 lượt .stream() CÙNG rate cuối cùng chỉ để lấy
+        # SentenceBoundary — không ghi đè voice.wav đã chốt ở trên (US4,
+        # research.md §4). Lỗi ở đây KHÔNG chặn job (chỉ mất phụ đề động,
+        # dub content vẫn còn giá trị — xử lý khác US3, xem pipeline.py).
+        try:
+            _collect_captions(content, voice, captions_path, rate=final_rate)
+        except RuntimeError as e:
+            print(f"[edge_tts_client] Thu captions.json thất bại ({e}), bỏ qua phụ đề động")
+
     return voice_path, duration
+
+
+def _collect_captions(content: str, voice: str, captions_path: Path, rate: str) -> None:
+    """Chạy edge-tts stream() chỉ để thu SentenceBoundary, ghi ra captions.json."""
+    cues = asyncio.run(_stream_sentence_boundaries(content, voice, rate))
+    if not cues:
+        raise RuntimeError("Không thu được SentenceBoundary nào từ edge-tts")
+    with open(captions_path, "w", encoding="utf-8") as f:
+        json.dump(cues, f, ensure_ascii=False, indent=2)
+
+
+async def _stream_sentence_boundaries(text: str, voice: str, rate: str) -> list[dict]:
+    """Chạy edge_tts.Communicate.stream(), trả về list cue {start, end, text} (giây)."""
+    import edge_tts
+
+    cues = []
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    async for chunk in communicate.stream():
+        if chunk.get("type") == "SentenceBoundary":
+            # offset/duration đơn vị 100-ns (chuẩn edge-tts/Azure Speech SDK)
+            start = chunk["offset"] / 1e7
+            cues.append(
+                {
+                    "start": start,
+                    "end": start + chunk["duration"] / 1e7,
+                    "text": chunk["text"].strip(),
+                }
+            )
+    return cues
 
 
 def _synthesize_with_fallback(content: str, voice: str, voice_path: Path, rate: str) -> None:
