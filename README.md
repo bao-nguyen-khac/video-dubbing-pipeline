@@ -21,6 +21,10 @@ cp .env.example .env
 | `ROUTER_BASE_URL` | Base URL đầy đủ kiểu OpenAI SDK, **đã bao gồm `/v1`** (vd `http://172.16.57.147:20128/v1`) |
 | `ROUTER_API_KEY` | API key gọi 9router |
 | `ROUTER_MODEL` | Model dùng cho dịch/viết kịch bản (vd `ag/gemini-3-flash-agent`) |
+| `ROUTER_TIMEOUT` | Timeout (giây) mỗi lượt gọi 9router, mặc định `120` — hết hạn thì fallback OpenRouter |
+| `OPENROUTER_API_KEY` | Key OpenRouter dùng dự phòng khi 9router chết (tuỳ chọn, bỏ trống = tắt fallback) |
+| `OPENROUTER_BASE_URL` | Mặc định `https://openrouter.ai/api/v1` |
+| `OPENROUTER_MODEL` | Model bên OpenRouter, mặc định `google/gemini-2.5-flash` — **khác** `ROUTER_MODEL` |
 | `WEB_UI_USERNAME` / `WEB_UI_PASSWORD` | Tài khoản đăng nhập giao diện web (chỉ 1 cặp duy nhất) |
 | `WEB_UI_SECRET_KEY` | Secret ký session cookie (7 ngày) — sinh 1 chuỗi ngẫu nhiên dài, không để trống |
 | `VIVIBE_API_KEY` | API key TTS Vivibe (tuỳ chọn, provider giọng đọc thứ 2 — không cấu hình vẫn dùng đủ tính năng với edge-tts) |
@@ -28,6 +32,25 @@ cp .env.example .env
 `.env` đã nằm trong `.gitignore` — không commit key thật. Chạy local, `pipeline.py`
 tự load `.env` qua `python-dotenv`; chạy Docker, `docker-compose.yml` đã khai báo
 `env_file: .env` nên cũng tự đọc, không cần truyền `-e` thủ công.
+
+### Fallback OpenRouter khi 9router không kết nối được
+
+9router là dịch vụ nội bộ (IP LAN) nên khi chạy ngoài mạng công ty sẽ timeout.
+Nếu `.env` có `OPENROUTER_API_KEY`, bước dịch/viết kịch bản tự gọi lại qua
+OpenRouter thay vì làm hỏng cả job — cùng giao thức OpenAI-compatible nên phần
+còn lại của pipeline không đổi. Log sẽ in rõ lúc chuyển:
+
+```
+[router_client] 9router lỗi (APITimeoutError: Request timed out.) → chuyển sang OpenRouter dự phòng (model google/gemini-2.5-flash)
+```
+
+Kiểm tra nhanh endpoint nào đang dùng được: `python env_check.py`.
+
+**Giới hạn:** fallback chỉ áp dụng cho LLM (dịch/viết kịch bản). Provider giọng
+đọc `--tts-provider router-tts` vẫn cần 9router vì OpenRouter không có endpoint
+`/audio/speech` — khi 9router chết, dùng `edge-tts` (mặc định, free) hoặc
+`lucyai`. Cả 2 endpoint cùng lỗi thì job dừng với thông báo liệt kê lỗi của
+từng endpoint.
 
 ## Cài đặt
 
@@ -76,13 +99,31 @@ python pipeline.py \
 |---|---|---|
 | `--url` | ✅ | URL TikTok, Douyin hoặc YouTube |
 | `--script-mode` | ✅ | `translate` (Dịch chuẩn, lồng tiếng), `rewrite` (Sáng tạo, lồng tiếng), hoặc `subtitle` (Phụ đề tự động — giữ nguyên âm thanh gốc, chỉ thêm phụ đề) |
-| `--dynamic-captions` | ❌ | Chỉ áp dụng với `translate`/`rewrite`: thêm phụ đề động (chữ kịch bản chạy khớp nhịp giọng đọc, theo từng câu) lên video đã lồng tiếng |
+| `--dynamic-captions` | ❌ | Chỉ áp dụng với `translate`/`rewrite`: thêm phụ đề động (chữ kịch bản chạy khớp nhịp giọng đọc, theo từng câu) lên video đã lồng tiếng — chính xác như nhau với cả 3 provider giọng đọc |
 | `--tts-provider` | ❌ | `edge-tts` (mặc định, free), `lucyai` (Vivibe, cần `VIVIBE_API_KEY`), hoặc `router-tts` (giọng Gemini qua 9router, tái dùng `ROUTER_API_KEY` có sẵn) — chỉ áp dụng với `translate`/`rewrite` |
 | `--voice-id` | ❌ | Giọng đọc cụ thể (VD `vi-VN-HoaiMyNeural` cho edge-tts, id giọng trong tài khoản Vivibe, hoặc tên giọng Gemini VD `Puck` cho router-tts); để trống → dùng giọng mặc định |
 | `--job-id` | ❌ | Resume job cũ; để trống → tạo job mới |
 
 Cả `translate` và `rewrite` đều giữ nhạc nền gốc (tách bằng Demucs, trộn với
-giọng đọc mới) và tự chỉnh tốc độ đọc để khớp gần đúng thời lượng video gốc.
+giọng đọc mới).
+
+### Lồng tiếng khớp nhịp tự nhiên (feature 005)
+
+Giọng đọc được tổng hợp **theo từng nhịp** chứ không phải một khối liên tục:
+pipeline gom các đoạn ASR thành "nhịp nói" theo đúng chỗ video gốc ngắt nghỉ,
+dịch/viết lại mỗi nhịp một dòng, rồi đặt từng nhịp vào đúng khung thời gian
+của nó và chèn **khoảng lặng thật** vào các quãng nghỉ. Mỗi nhịp chỉ được
+**tăng tốc nhẹ** khi đọc tràn khung (tối đa 1.4×) — không bao giờ đọc chậm để
+lấp cho vừa khít, vì đó chính là nguyên nhân khiến bản lồng tiếng cũ nghe chậm
+và liền một mạch.
+
+- Nhịp đọc tràn khung sẽ đẩy lùi nhịp kế tiếp thay vì bị cắt nội dung — bản
+  lồng tiếng có thể dài hơn video gốc một chút ở video nhiều câu tràn.
+- Một vài nhịp lỗi tổng hợp (timeout, hết quota provider...) **không làm hỏng
+  cả job**: đoạn đó thành khoảng lặng, job vẫn hoàn tất kèm cảnh báo rõ số câu
+  bị ảnh hưởng. Chỉ khi toàn bộ nhịp đều lỗi job mới báo thất bại.
+- Mốc thời gian thực tế của từng nhịp được ghi ra `voice_timeline.json` và
+  cũng là nguồn của phụ đề động (`--dynamic-captions`) cho cả 3 provider.
 
 ### Chọn giọng đọc — edge-tts / Vivibe / 9router (feature 004)
 
@@ -178,10 +219,12 @@ jobs/{job_id}/
 ├── job.json         # Trạng thái và metadata
 ├── source.mp4       # Video gốc đã tải
 ├── transcript.json  # Lời thoại trích xuất (kèm mốc thời gian từng câu)
-├── script.json      # Kịch bản tiếng Việt (hoặc segments dịch sát nghĩa nếu subtitle)
-├── voice.wav        # Giọng đọc tổng hợp — không có nếu script-mode=subtitle
+├── script.json      # Kịch bản tiếng Việt, chia theo từng nhịp (mảng segments)
+├── segments/        # Audio trung gian từng nhịp + khoảng lặng (phục vụ resume)
+├── voice.wav        # Giọng đọc đã ghép theo timeline — không có nếu script-mode=subtitle
+├── voice_timeline.json  # Mốc thời gian THỰC TẾ từng nhịp trong voice.wav + nhịp lỗi (nếu có)
 ├── background.wav   # Nhạc nền tách được (Demucs), nếu có
-├── captions.json    # Mốc thời gian phụ đề động theo câu, nếu bật --dynamic-captions
+├── captions.json    # Mốc thời gian phụ đề động theo nhịp, nếu bật --dynamic-captions
 ├── subtitles.srt     # File phụ đề trung gian trước khi burn-in (subtitle hoặc dynamic-captions)
 └── output.mp4       # Sản phẩm cuối cùng
 ```
@@ -192,3 +235,4 @@ jobs/{job_id}/
 - Giao diện web (spec, plan, API, quickstart): [`specs/002-web-ui/`](specs/002-web-ui/)
 - Sửa lỗi lồng tiếng + phụ đề tự động/động (spec, plan, research, quickstart): [`specs/003-dubbing-fixes-subtitles/`](specs/003-dubbing-fixes-subtitles/)
 - Chọn giọng đọc + nghe thử, provider Vivibe (spec, plan, research, quickstart): [`specs/004-voice-selection-preview/`](specs/004-voice-selection-preview/)
+- Lồng tiếng khớp nhịp tự nhiên theo từng câu (spec, plan, research, quickstart): [`specs/005-natural-pause-dubbing/`](specs/005-natural-pause-dubbing/)

@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listJobs, type JobSummary } from "../api/client";
+import AppShell from "../components/AppShell";
+import Callout from "../components/Callout";
+import StatusBadge from "../components/StatusBadge";
+import { IconInbox } from "../components/Icon";
+import { PLATFORM_LABELS, relativeTime, absoluteTime, shortUrl } from "../lib/labels";
 
 export default function JobListPage() {
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
@@ -9,48 +14,66 @@ export default function JobListPage() {
   useEffect(() => {
     listJobs()
       .then((res) => setJobs(res.jobs))
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Không tải được danh sách job"));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : "Không tải được danh sách job"),
+      );
   }, []);
 
   return (
-    <div className="page job-list-page">
-      <h1>Lịch sử job</h1>
-      <p>
-        <Link to="/">← Quay lại trang chủ</Link>
-      </p>
+    <AppShell>
+      <div className="page-head">
+        <h1>Lịch sử job</h1>
+        <p className="page-head__lead">
+          {jobs === null ? "Đang tải..." : `${jobs.length} job đã chạy trên máy này.`}
+        </p>
+      </div>
 
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="error" title="Không tải được danh sách">
+          {error}
+        </Callout>
+      )}
 
-      {jobs === null && !error && <p>Đang tải...</p>}
+      {jobs === null && !error && (
+        <div>
+          <div className="skeleton skeleton--row" />
+          <div className="skeleton skeleton--row" />
+          <div className="skeleton skeleton--row" />
+        </div>
+      )}
 
-      {jobs !== null && jobs.length === 0 && <p>Chưa có job nào.</p>}
+      {jobs !== null && jobs.length === 0 && (
+        <div className="card">
+          <div className="empty">
+            <IconInbox className="empty__icon" />
+            <div className="empty__title">Chưa có job nào</div>
+            <p>
+              Dán link video ở <Link to="/">trang tạo job</Link> để bắt đầu.
+            </p>
+          </div>
+        </div>
+      )}
 
       {jobs !== null && jobs.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>URL</th>
-              <th>Nền tảng</th>
-              <th>Trạng thái</th>
-              <th>%</th>
-              <th>Tạo lúc</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.job_id}>
-                <td>
-                  <Link to={`/jobs/${job.job_id}`}>{job.source_url}</Link>
-                </td>
-                <td>{job.platform}</td>
-                <td>{job.status}</td>
-                <td>{job.progress_percent}%</td>
-                <td>{new Date(job.created_at).toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="job-list">
+          {jobs.map((job) => (
+            <Link key={job.job_id} to={`/jobs/${job.job_id}`} className="job-row">
+              <div className="job-row__url" title={job.source_url}>
+                {shortUrl(job.source_url)}
+              </div>
+              <div className="job-row__meta">
+                <span>{PLATFORM_LABELS[job.platform] ?? job.platform}</span>
+                <span>·</span>
+                <span title={absoluteTime(job.created_at)}>{relativeTime(job.created_at)}</span>
+              </div>
+              <div className="job-row__status">
+                <StatusBadge status={job.status} />
+                <span className="job-row__pct">{job.progress_percent}%</span>
+              </div>
+            </Link>
+          ))}
+        </div>
       )}
-    </div>
+    </AppShell>
   );
 }

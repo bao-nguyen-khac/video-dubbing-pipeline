@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   ApiError,
@@ -10,20 +10,17 @@ import {
   type JobDetail,
   type Voice,
 } from "../api/client";
-
-// Polling 3s — đủ đáp ứng SC-002 (phản ánh đúng trong 10s), tránh WebSocket
-// không cần thiết (research.md → Cập nhật tiến trình phía frontend)
-const POLL_INTERVAL_MS = 3000;
-
-const TERMINAL_STATUSES = new Set(["done", "failed"]);
-
-// Nhãn hiển thị cho provider — "lucyai" hiện là "Vivibe" (tên người dùng
-// biết tới), khác định danh nội bộ khớp API thật (004, research.md §2)
-const PROVIDER_LABELS: Record<string, string> = {
-  "edge-tts": "edge-tts",
-  lucyai: "Vivibe",
-  "router-tts": "9router",
-};
+import AppShell from "../components/AppShell";
+import Callout from "../components/Callout";
+import JobProgress from "../components/JobProgress";
+import { IconDownload, IconPlay } from "../components/Icon";
+import {
+  POLL_INTERVAL_MS,
+  PROVIDER_LABELS,
+  SCRIPT_MODES,
+  TERMINAL_STATUSES,
+  type ScriptMode,
+} from "../lib/labels";
 
 function voiceKey(v: Voice) {
   return `${v.provider}|${v.voice_id}`;
@@ -31,7 +28,7 @@ function voiceKey(v: Voice) {
 
 export default function HomePage() {
   const [url, setUrl] = useState("");
-  const [scriptMode, setScriptMode] = useState<"translate" | "rewrite" | "subtitle">("translate");
+  const [scriptMode, setScriptMode] = useState<ScriptMode>("translate");
   const [dynamicCaptions, setDynamicCaptions] = useState(false);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoiceKey, setSelectedVoiceKey] = useState<string>("");
@@ -137,107 +134,194 @@ export default function HomePage() {
   }
 
   const isBusy = job !== null && !TERMINAL_STATUSES.has(job.status);
+  const isDubbing = scriptMode !== "subtitle";
+  const locked = isBusy || submitting;
+
+  // Nhóm giọng theo provider để danh sách dài vẫn dễ chọn
+  const voiceGroups = useMemo(() => {
+    const groups = new Map<string, Voice[]>();
+    for (const v of voices) {
+      const list = groups.get(v.provider) ?? [];
+      list.push(v);
+      groups.set(v.provider, list);
+    }
+    return [...groups.entries()];
+  }, [voices]);
 
   return (
-    <div className="page home-page">
-      <h1>Video Repurpose Pipeline</h1>
-      <p>
-        <Link to="/jobs">Xem lịch sử job</Link>
-      </p>
+    <AppShell narrow>
+      <div className="page-head">
+        <h1>Tạo job mới</h1>
+        <p className="page-head__lead">
+          Dán link TikTok, Douyin hoặc YouTube — hệ thống sẽ tải video, tách lời, viết
+          kịch bản tiếng Việt và lồng tiếng khớp nhịp ngắt nghỉ của bản gốc.
+        </p>
+      </div>
 
       <form onSubmit={handleSubmit}>
-        <label>
-          URL video (TikTok / Douyin / YouTube)
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.tiktok.com/@user/video/..."
-            disabled={isBusy || submitting}
-            required
-          />
-        </label>
-        <label>
-          Chế độ kịch bản
-          <select
-            value={scriptMode}
-            onChange={(e) => setScriptMode(e.target.value as "translate" | "rewrite" | "subtitle")}
-            disabled={isBusy || submitting}
-          >
-            <option value="translate">Dịch chuẩn (lồng tiếng)</option>
-            <option value="rewrite">Sáng tạo (lồng tiếng)</option>
-            <option value="subtitle">Phụ đề tự động (giữ âm thanh gốc)</option>
-          </select>
-        </label>
-        {scriptMode !== "subtitle" && (
-          <label>
-            Giọng đọc
-            <div className="voice-picker">
-              <select
-                value={selectedVoiceKey}
-                onChange={(e) => setSelectedVoiceKey(e.target.value)}
-                disabled={isBusy || submitting || voices.length === 0}
-              >
-                {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
-                {voices.map((v) => (
-                  <option key={voiceKey(v)} value={voiceKey(v)}>
-                    {v.name} ({PROVIDER_LABELS[v.provider] ?? v.provider})
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={handlePreview}
-                disabled={previewing || !selectedVoiceKey}
-              >
-                {previewing ? "Đang tải..." : "Nghe thử"}
-              </button>
-            </div>
-            {previewError && <span className="error">{previewError}</span>}
-          </label>
-        )}
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <audio ref={audioRef} hidden />
-        {scriptMode !== "subtitle" && (
-          <label className="checkbox-label">
+        <div className="card">
+          <div className="field">
+            <label className="field__label" htmlFor="video-url">
+              URL video
+            </label>
             <input
-              type="checkbox"
-              checked={dynamicCaptions}
-              onChange={(e) => setDynamicCaptions(e.target.checked)}
-              disabled={isBusy || submitting}
+              id="video-url"
+              className="input"
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://www.tiktok.com/@user/video/..."
+              disabled={locked}
+              required
             />
-            Phụ đề động (chữ khớp nhịp giọng đọc)
-          </label>
-        )}
-        <button type="submit" disabled={isBusy || submitting}>
-          {submitting ? "Đang gửi..." : "Chạy"}
-        </button>
+            <span className="field__hint">Hỗ trợ TikTok, Douyin (không watermark) và YouTube.</span>
+          </div>
+
+          <div className="field">
+            <span className="field__label">Chế độ xử lý</span>
+            <div className="mode-grid">
+              {SCRIPT_MODES.map((mode) => (
+                <label key={mode.value} className="mode-option">
+                  <input
+                    type="radio"
+                    name="script-mode"
+                    value={mode.value}
+                    checked={scriptMode === mode.value}
+                    onChange={() => setScriptMode(mode.value)}
+                    disabled={locked}
+                  />
+                  <span className="mode-option__body">
+                    <span className="mode-option__name">{mode.name}</span>
+                    <span className="mode-option__desc">{mode.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {isDubbing && (
+            <div className="field">
+              <label className="field__label" htmlFor="voice-select">
+                Giọng đọc
+              </label>
+              <div className="voice-picker">
+                <select
+                  id="voice-select"
+                  className="select"
+                  value={selectedVoiceKey}
+                  onChange={(e) => setSelectedVoiceKey(e.target.value)}
+                  disabled={locked || voices.length === 0}
+                >
+                  {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
+                  {voiceGroups.map(([provider, list]) => (
+                    <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
+                      {list.map((v) => (
+                        <option key={voiceKey(v)} value={voiceKey(v)}>
+                          {v.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={handlePreview}
+                  disabled={previewing || !selectedVoiceKey}
+                >
+                  {previewing ? <span className="btn__spinner" /> : <IconPlay />}
+                  {previewing ? "Đang tải" : "Nghe thử"}
+                </button>
+              </div>
+              {previewError && (
+                <span className="field__hint" style={{ color: "var(--danger)" }}>
+                  {previewError}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio ref={audioRef} hidden />
+
+          {isDubbing && (
+            <div className="field">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={dynamicCaptions}
+                  onChange={(e) => setDynamicCaptions(e.target.checked)}
+                  disabled={locked}
+                />
+                <span className="switch__track" />
+                <span className="switch__text">
+                  <span className="switch__name">Phụ đề động</span>
+                  <span className="switch__desc">
+                    Chữ chạy khớp nhịp giọng đọc, chính xác với cả 3 provider
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          <div className="field">
+            <button type="submit" className="btn btn--primary btn--block" disabled={locked}>
+              {submitting && <span className="btn__spinner" />}
+              {submitting ? "Đang gửi..." : isBusy ? "Đang xử lý job hiện tại" : "Chạy pipeline"}
+            </button>
+          </div>
+        </div>
       </form>
 
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Callout tone="error" title="Không gửi được job">
+          {error}
+        </Callout>
+      )}
 
       {job && (
-        <div className="job-progress">
-          <p>
-            Trạng thái: <strong>{job.status}</strong> ({job.progress_percent}%)
-          </p>
-          <progress value={job.progress_percent} max={100} style={{ width: "100%" }} />
+        <div className="card">
+          <div className="card__title">
+            <h2>Tiến trình</h2>
+            <Link
+              to={`/jobs/${job.job_id}`}
+              style={{ marginLeft: "auto", fontSize: "0.85rem" }}
+            >
+              Xem chi tiết →
+            </Link>
+          </div>
+
+          <JobProgress
+            status={job.status}
+            progressPercent={job.progress_percent}
+            scriptMode={job.script_mode}
+          />
 
           {job.status === "failed" && (
-            <p className="error">Lỗi: {job.error ?? "Không rõ nguyên nhân"}</p>
+            <div style={{ marginTop: "1rem" }}>
+              <Callout tone="error" title="Job thất bại">
+                {job.error ?? "Không rõ nguyên nhân"}
+              </Callout>
+            </div>
           )}
 
           {job.status === "done" && job.output_video_url && (
-            <div className="job-result">
-              <video src={outputUrl(job.job_id)} controls width={360} />
-              <p>
-                <a href={outputUrl(job.job_id)} download>
+            <div className="result" style={{ marginTop: "1.25rem" }}>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <video src={outputUrl(job.job_id)} controls preload="metadata" />
+              <div className="result__actions">
+                <a className="btn btn--primary" href={outputUrl(job.job_id)} download>
+                  <IconDownload />
                   Tải video
                 </a>
-              </p>
+                <Link className="btn btn--ghost" to={`/jobs/${job.job_id}`}>
+                  Xem chi tiết job
+                </Link>
+              </div>
             </div>
           )}
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }

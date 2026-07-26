@@ -12,8 +12,7 @@ khoản riêng của người dùng (đọc key từ `.env`, không hardcode).
 
 from __future__ import annotations
 
-import json
-import subprocess
+import os
 import time
 from pathlib import Path
 
@@ -24,7 +23,6 @@ _POLL_TIMEOUT_SECONDS = 120.0
 # Tốc độ Vivibe hợp lệ [0.5, 2.0] — hẹp hơn edge-tts rate [-20%, +40%]
 _SPEED_MIN = 0.5
 _SPEED_MAX = 2.0
-_DURATION_ADJUST_TOLERANCE_SECONDS = 2.0
 
 
 def list_voices(api_key: str) -> list[dict]:
@@ -83,7 +81,7 @@ def synthesize(
             timeout khi poll (`_POLL_TIMEOUT_SECONDS`).
     """
     output_path = Path(output_path)
-    speed = max(0.5, min(2.0, speed))
+    speed = max(_SPEED_MIN, min(_SPEED_MAX, speed))
 
     submit_result = _call_json_rpc(
         "ttsLongText",
@@ -103,95 +101,28 @@ def synthesize(
     return output_path, duration
 
 
-def synthesize_from_script(
-    script_path: str | Path,
-    job_dir: Path,
-    voice_id: str,
-    api_key: str,
-    target_duration: float | None = None,
-) -> tuple[Path, float]:
+def synthesize_text(text: str, voice_id: str, output_path: str | Path) -> Path:
     """
-    Sinh voice.wav từ script.json bằng Vivibe — cùng shape gọi với
-    `edge_tts_client.synthesize()` để `pipeline.py` dispatch đơn giản (research.md
-    §4). Tự đọc script.json, resume nếu voice.wav đã có, và áp dụng 2-pass
-    khớp thời lượng bằng `speed` trong `[0.5, 2.0]` (hẹp hơn `rate` của
-    edge-tts). `speed` của Vivibe không tuyến tính với thời lượng thực tế
-    (verify thật: needed_speed tính theo tỉ lệ tuyến tính vẫn lệch ~5s với
-    các đoạn lệch nhịp lớn) — nếu sau 2-pass vẫn lệch quá tolerance, khớp nốt
-    bằng ffmpeg `atempo` hậu xử lý (cùng cơ chế router_tts_client.py).
+    Sinh audio từ 1 đoạn text ở tốc độ mặc định — chữ ký adapter dùng chung
+    với `edge_tts_client.synthesize_text()` và `router_tts_client.synthesize_text()`
+    để `tts/segment_synthesizer.py` gọi được cả 3 provider như nhau
+    (005-natural-pause-dubbing, research.md §7).
+
+    Khác `synthesize()`: tự đọc `VIVIBE_API_KEY` từ env thay vì nhận tham số,
+    và luôn dùng `speed=1.0` (khớp thời lượng do segment_synthesizer lo bằng
+    ffmpeg `atempo`, research.md §3).
 
     Raises:
-        RuntimeError: Nếu script.json không tồn tại/rỗng, hoặc Vivibe lỗi.
+        RuntimeError: Nếu thiếu `VIVIBE_API_KEY` hoặc Vivibe lỗi.
     """
-    script_path = Path(script_path)
-    job_dir = Path(job_dir)
-    voice_path = job_dir / "voice.wav"
-
-    if voice_path.exists() and voice_path.stat().st_size > 0:
-        from media_utils import get_media_duration
-
-        return voice_path, get_media_duration(voice_path)
-
-    if not script_path.exists():
-        raise RuntimeError(f"script.json không tồn tại: {script_path}")
-
-    with open(script_path, encoding="utf-8") as f:
-        content = json.load(f).get("content", "").strip()
-
-    if not content:
+    api_key = os.environ.get("VIVIBE_API_KEY", "")
+    if not api_key:
         raise RuntimeError(
-            "Kịch bản rỗng — không thể sinh giọng đọc. "
-            "Video gốc có thể không có lời thoại."
+            "Thiếu VIVIBE_API_KEY trong .env — cần để dùng giọng đọc Vivibe."
         )
-
-    _, duration = synthesize(content, voice_id, api_key, voice_path, speed=1.0)
-
-    if target_duration and target_duration > 0 and duration > 0:
-        diff_seconds = duration - target_duration
-        if abs(diff_seconds) > _DURATION_ADJUST_TOLERANCE_SECONDS:
-            needed_speed = duration / target_duration
-            applied_speed = max(_SPEED_MIN, min(_SPEED_MAX, needed_speed))
-            if applied_speed != 1.0:
-                try:
-                    _, duration = synthesize(
-                        content, voice_id, api_key, voice_path, speed=applied_speed
-                    )
-                except RuntimeError as e:
-                    print(f"[lucyai_client] Chỉnh speed={applied_speed:.2f} thất bại ({e}), giữ bản tốc độ mặc định")
-
-        # `speed` của Vivibe/LucyAI đã verify thật KHÔNG tuyến tính với thời
-        # lượng thực tế (VD needed_speed=0.541 dự kiến ra ~72s nhưng thực tế
-        # chỉ ra 66.9s) — pass trên chỉ là xấp xỉ, có thể vẫn lệch quá
-        # tolerance với các đoạn lệch nhịp lớn. Đóng nốt phần lệch còn lại
-        # bằng ffmpeg atempo hậu xử lý (cùng cơ chế đã dùng cho router-tts).
-        remaining_diff = duration - target_duration
-        if duration > 0 and abs(remaining_diff) > _DURATION_ADJUST_TOLERANCE_SECONDS:
-            tempo = max(_SPEED_MIN, min(_SPEED_MAX, duration / target_duration))
-            try:
-                _apply_atempo(voice_path, tempo)
-                from media_utils import get_media_duration
-
-                duration = get_media_duration(voice_path)
-            except RuntimeError as e:
-                print(f"[lucyai_client] Chỉnh tempo={tempo:.2f} (ffmpeg) thất bại ({e}), giữ bản chưa khớp hết")
-
-    return voice_path, duration
-
-
-def _apply_atempo(voice_path: Path, tempo: float) -> None:
-    """Đổi tốc độ phát (không đổi cao độ đáng kể) bằng ffmpeg atempo, ghi đè voice_path."""
-    tmp_path = voice_path.with_suffix(".tmp.wav")
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(voice_path),
-        "-filter:a", f"atempo={tempo:.4f}",
-        str(tmp_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(f"ffmpeg atempo thất bại (exit {result.returncode}): {result.stderr[-300:]}")
-    tmp_path.replace(voice_path)
+    output_path = Path(output_path)
+    synthesize(text, voice_id, api_key, output_path, speed=1.0)
+    return output_path
 
 
 def _poll_export_status(project_export_id: str, api_key: str) -> str:

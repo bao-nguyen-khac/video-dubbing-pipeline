@@ -1,0 +1,30 @@
+{
+  "language": "en",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.2,
+      "text": "Most people set up their morning completely wrong."
+    },
+    {
+      "start": 4.8,
+      "end": 8.0,
+      "text": "They check the phone before they even get out of bed."
+    },
+    {
+      "start": 10.0,
+      "end": 13.5,
+      "text": "That single habit drains your focus for the whole day."
+    },
+    {
+      "start": 15.0,
+      "end": 18.2,
+      "text": "Here is the fix that took me two weeks to find."
+    },
+    {
+      "start": 19.5,
+      "end": 23.0,
+      "text": "Leave the phone in another room overnight. That is it."
+    }
+  ]
+}

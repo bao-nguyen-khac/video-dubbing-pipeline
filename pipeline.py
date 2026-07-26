@@ -94,6 +94,9 @@ def create_job(
             "transcript": None,
             "script": None,
             "voice_track": None,
+            # 005-natural-pause-dubbing: mốc thời gian thực tế từng nhịp trong
+            # voice.wav — nguồn của captions.json và của kiểm tra SC-001/SC-002
+            "voice_timeline": None,
             "background_audio": None,
             "output_video": None,
         },
@@ -101,7 +104,11 @@ def create_job(
             "watermark": False,
             "duration_mismatch": False,
             "background_music_lost": False,
+            # 005: có ≥1 nhịp bị thay bằng khoảng lặng do lỗi TTS cục bộ (FR-007)
+            "tts_segments_failed": False,
         },
+        # 005: số nhịp lỗi — để UI nói rõ "N câu" thay vì chỉ "có câu lỗi"
+        "tts_failed_segments": 0,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
@@ -325,9 +332,8 @@ def run_pipeline(
     from merge.subtitle_burner import burn_subtitles, write_srt
     from merge.vocal_separator import extract_background_music
     from script_gen.router_client import generate_script, generate_subtitle_script
-    from tts.edge_tts_client import DEFAULT_VOICE, synthesize as edge_tts_synthesize
-    from tts.lucyai_client import synthesize_from_script as lucyai_synthesize
-    from tts.router_tts_client import synthesize_from_script as router_tts_synthesize
+    from tts.edge_tts_client import DEFAULT_VOICE
+    from tts.segment_synthesizer import synthesize_segments
 
     # 0. Kiểm tra môi trường (T006, FR-008) — fail sớm, rõ ràng nếu thiếu ffmpeg/9router
     if not run_checks():
@@ -449,12 +455,12 @@ def run_pipeline(
                     job["artifacts"]["transcript"], job_dir
                 )
             else:
-                source_duration = get_media_duration(job["artifacts"]["source_video"])
+                # 005: ngân sách ký tự nay tính theo TỪNG nhịp từ mốc ASR bên
+                # trong generate_script() — không cần source_duration nữa
                 script_path = generate_script(
                     job["artifacts"]["transcript"],
                     job_dir,
                     mode=script_mode,
-                    source_duration=source_duration if source_duration > 0 else None,
                 )
             update_job_status(
                 jid,
@@ -486,41 +492,51 @@ def run_pipeline(
             print(f"[pipeline][{jid}] Bắt đầu synthesizing (provider={active_provider}, voice={active_voice_id})...")
             try:
                 source_duration = get_media_duration(job["artifacts"]["source_video"])
-                target_duration = source_duration if source_duration > 0 else None
 
-                if active_provider == "lucyai":
-                    import os
+                # Job tạo trước feature 005 resume thẳng vào bước này có
+                # script.json không chia nhịp — sinh lại thay vì fail
+                # (research.md §7; generate_script() tự nhận ra file cũ)
+                with open(job["artifacts"]["script"], encoding="utf-8") as f:
+                    has_segments = bool(json.load(f).get("segments"))
+                if not has_segments:
+                    print(f"[pipeline][{jid}] script.json cũ chưa chia nhịp, sinh lại kịch bản...")
+                    generate_script(
+                        job["artifacts"]["transcript"], job_dir, mode=script_mode
+                    )
 
-                    api_key = os.environ.get("VIVIBE_API_KEY", "")
-                    voice_path, duration = lucyai_synthesize(
-                        job["artifacts"]["script"],
-                        job_dir,
-                        voice_id=active_voice_id,
-                        api_key=api_key,
-                        target_duration=target_duration,
-                    )
-                elif active_provider == "router-tts":
-                    voice_path, duration = router_tts_synthesize(
-                        job["artifacts"]["script"],
-                        job_dir,
-                        voice_id=active_voice_id,
-                        target_duration=target_duration,
-                    )
-                else:
-                    voice_path, duration = edge_tts_synthesize(
-                        job["artifacts"]["script"],
-                        job_dir,
-                        voice=active_voice_id,
-                        target_duration=target_duration,
-                        collect_captions=dynamic_captions,
-                    )
+                # 005: tổng hợp theo từng nhịp + ghép timeline có khoảng lặng
+                # thật, dùng chung 1 cơ chế cho cả 3 provider (FR-001..FR-005)
+                voice_path, duration, timeline = synthesize_segments(
+                    job["artifacts"]["script"],
+                    job_dir,
+                    provider=active_provider,
+                    voice_id=active_voice_id,
+                    dynamic_captions=dynamic_captions,
+                )
+
+                failed_count = timeline.get("failed_count", 0)
+                total_count = len(timeline.get("segments", []))
 
                 update_job_status(
                     jid,
                     "merging",
-                    artifacts_update={"voice_track": str(voice_path)},
+                    artifacts_update={
+                        "voice_track": str(voice_path),
+                        "voice_timeline": str(job_dir / "voice_timeline.json"),
+                    },
+                    warnings_update={"tts_segments_failed": failed_count > 0},
+                    extra_update={"tts_failed_segments": failed_count},
                 )
-                print(f"[pipeline][{jid}] TTS xong: {voice_path} ({duration:.1f}s, video gốc {source_duration:.1f}s)")
+                print(
+                    f"[pipeline][{jid}] TTS xong: {voice_path} ({duration:.1f}s, "
+                    f"video gốc {source_duration:.1f}s, {failed_count}/{total_count} nhịp lỗi)"
+                )
+                if failed_count:
+                    # FR-006: lỗi cục bộ KHÔNG fail job — chỉ cảnh báo rõ ràng
+                    print(
+                        f"[pipeline][{jid}] ⚠ Cảnh báo: {failed_count} nhịp bị lỗi "
+                        "tổng hợp giọng đọc, đã thay bằng khoảng lặng"
+                    )
             except Exception as e:
                 fail_job(jid, "synthesizing", e)
                 print(f"[ERROR][{jid}] TTS thất bại: {e}", file=sys.stderr)

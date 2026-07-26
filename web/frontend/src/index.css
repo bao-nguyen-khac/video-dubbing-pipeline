@@ -1,111 +1,197 @@
+/*
+ * index.css — Design tokens + reset + base typography.
+ *
+ * Tokens là nguồn duy nhất cho màu/bo góc/đổ bóng; component style nằm ở
+ * App.css và CHỈ dùng var(--...) chứ không hardcode màu, để đổi theme không
+ * phải sửa rải rác.
+ */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
   color-scheme: light dark;
+
+  /* ── Nền & bề mặt ─────────────────────────────────────────────────── */
+  --bg: #f7f7fa;
+  --bg-grad: radial-gradient(
+      1200px 600px at 15% -10%,
+      rgba(139, 61, 255, 0.1),
+      transparent 60%
+    ),
+    radial-gradient(900px 500px at 110% 0%, rgba(56, 189, 248, 0.08), transparent 55%);
+  --surface: #ffffff;
+  --surface-2: #f2f2f7;
+  --surface-hover: #ececf3;
+
+  /* ── Viền ─────────────────────────────────────────────────────────── */
+  --border: #e3e2ea;
+  --border-strong: #cfcdd9;
+
+  /* ── Chữ ──────────────────────────────────────────────────────────── */
+  --text: #52505e;
+  --text-strong: #16141f;
+  --text-muted: #86838f;
+
+  /* ── Nhấn (thương hiệu) ───────────────────────────────────────────── */
+  --accent: #8b3dff;
+  --accent-hover: #7a2df0;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(139, 61, 255, 0.1);
+  --accent-ring: rgba(139, 61, 255, 0.35);
+
+  /* ── Trạng thái ───────────────────────────────────────────────────── */
+  --ok: #18794e;
+  --ok-soft: rgba(48, 164, 108, 0.14);
+  --ok-border: rgba(48, 164, 108, 0.35);
+  --warn: #a15c07;
+  --warn-soft: rgba(255, 178, 36, 0.16);
+  --warn-border: rgba(255, 178, 36, 0.45);
+  --danger: #cd2b31;
+  --danger-soft: rgba(229, 72, 77, 0.12);
+  --danger-border: rgba(229, 72, 77, 0.35);
+  --info: #0d74ce;
+  --info-soft: rgba(0, 145, 255, 0.12);
+
+  /* ── Hình khối ────────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-full: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 12, 32, 0.06), 0 1px 3px rgba(16, 12, 32, 0.05);
+  --shadow: 0 4px 12px rgba(16, 12, 32, 0.07), 0 1px 3px rgba(16, 12, 32, 0.05);
+  --shadow-lg: 0 18px 40px -12px rgba(16, 12, 32, 0.22);
+
+  /* ── Chữ (font) ───────────────────────────────────────────────────── */
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
   color: var(--text);
-  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+    --bg: #0e0d13;
+    --bg-grad: radial-gradient(
+        1200px 600px at 15% -10%,
+        rgba(168, 108, 255, 0.16),
+        transparent 60%
+      ),
+      radial-gradient(900px 500px at 110% 0%, rgba(56, 189, 248, 0.1), transparent 55%);
+    --surface: #17161f;
+    --surface-2: #1e1d28;
+    --surface-hover: #262433;
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --border: #2b2937;
+    --border-strong: #3b3849;
+
+    --text: #a8a4b8;
+    --text-strong: #f4f2f8;
+    --text-muted: #7c7890;
+
+    --accent: #b581ff;
+    --accent-hover: #c79bff;
+    --accent-fg: #16081f;
+    --accent-soft: rgba(181, 129, 255, 0.16);
+    --accent-ring: rgba(181, 129, 255, 0.45);
+
+    --ok: #4cc38a;
+    --ok-soft: rgba(76, 195, 138, 0.14);
+    --ok-border: rgba(76, 195, 138, 0.32);
+    --warn: #ffcb47;
+    --warn-soft: rgba(255, 203, 71, 0.14);
+    --warn-border: rgba(255, 203, 71, 0.34);
+    --danger: #ff9592;
+    --danger-soft: rgba(255, 99, 105, 0.14);
+    --danger-border: rgba(255, 99, 105, 0.32);
+    --info: #70b8ff;
+    --info-soft: rgba(112, 184, 255, 0.14);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 20px 44px -14px rgba(0, 0, 0, 0.7);
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  min-height: 100svh;
+  background-color: var(--bg);
+  background-image: var(--bg-grad);
+  background-attachment: fixed;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
 }
 
 h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+h2,
+h3 {
+  color: var(--text-strong);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  font-size: 1.75rem;
+  line-height: 1.2;
 }
+
 h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
+  font-size: 1.125rem;
+  line-height: 1.3;
 }
+
+h3 {
+  font-size: 0.95rem;
+}
+
 p {
   margin: 0;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+a {
+  color: var(--accent);
+  text-decoration: none;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

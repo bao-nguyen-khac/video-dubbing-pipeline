@@ -1,0 +1,38 @@
+[
+  {
+    "name": "pause",
+    "video": "/workspaces/video-dubbing-pipeline/specs/005-natural-pause-dubbing/fixtures/video_pause.mp4",
+    "transcript": "/workspaces/video-dubbing-pipeline/specs/005-natural-pause-dubbing/fixtures/transcript_pause.json",
+    "duration": 23.0,
+    "segments": 5,
+    "gaps": [
+      1.6,
+      2.0,
+      1.5,
+      1.3
+    ],
+    "pauses_ge_1s": [
+      1.6,
+      2.0,
+      1.5,
+      1.3
+    ]
+  },
+  {
+    "name": "dense",
+    "video": "/workspaces/video-dubbing-pipeline/specs/005-natural-pause-dubbing/fixtures/video_dense.mp4",
+    "transcript": "/workspaces/video-dubbing-pipeline/specs/005-natural-pause-dubbing/fixtures/transcript_dense.json",
+    "duration": 22.0,
+    "segments": 8,
+    "gaps": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "pauses_ge_1s": []
+  }
+]

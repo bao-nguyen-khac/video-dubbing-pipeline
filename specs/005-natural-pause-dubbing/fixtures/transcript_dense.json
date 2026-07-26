@@ -1,0 +1,45 @@
+{
+  "language": "en",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.6,
+      "text": "Okay so listen up because this part matters a lot."
+    },
+    {
+      "start": 2.7,
+      "end": 5.4,
+      "text": "The algorithm rewards watch time above everything else."
+    },
+    {
+      "start": 5.5,
+      "end": 8.1,
+      "text": "That means your first three seconds decide the whole video."
+    },
+    {
+      "start": 8.2,
+      "end": 10.9,
+      "text": "Start with motion, start with a question, never with a logo."
+    },
+    {
+      "start": 11.0,
+      "end": 13.6,
+      "text": "Then keep every single sentence under two seconds long."
+    },
+    {
+      "start": 13.7,
+      "end": 16.4,
+      "text": "Cut the pauses, cut the throat clearing, cut the intro."
+    },
+    {
+      "start": 16.5,
+      "end": 19.1,
+      "text": "People decide in half a second whether to keep watching."
+    },
+    {
+      "start": 19.2,
+      "end": 22.0,
+      "text": "Do that consistently and the reach takes care of itself."
+    }
+  ]
+}

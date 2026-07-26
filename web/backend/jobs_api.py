@@ -106,6 +106,10 @@ def _job_to_detail(job: dict) -> dict:
             "subtitles_burned": job.get("subtitles_burned", False),
             "tts_provider": job.get("tts_provider", "edge-tts"),
             "voice_id": job.get("voice_id"),
+            # 005-natural-pause-dubbing: số nhịp bị thay bằng khoảng lặng do
+            # lỗi TTS cục bộ (warnings.tts_segments_failed đi kèm, được
+            # pass-through nguyên vẹn bên dưới)
+            "tts_failed_segments": job.get("tts_failed_segments", 0),
             "error": job.get("error"),
             "warnings": job.get("warnings", {}),
             "output_video_url": f"/api/jobs/{job['job_id']}/output" if has_output else None,

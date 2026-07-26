@@ -14,11 +14,16 @@ export interface JobDetail extends JobSummary {
   script_mode: string;
   dynamic_captions: boolean;
   subtitles_burned: boolean;
+  tts_provider: string;
+  voice_id: string | null;
+  // 005-natural-pause-dubbing: số nhịp bị thay bằng khoảng lặng do lỗi TTS cục bộ
+  tts_failed_segments: number;
   error: string | null;
   warnings: {
     watermark?: boolean;
     duration_mismatch?: boolean;
     background_music_lost?: boolean;
+    tts_segments_failed?: boolean;
   };
   output_video_url: string | null;
   can_retry: boolean;
