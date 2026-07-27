@@ -10,7 +10,7 @@ Thay cơ chế "tổng hợp giọng đọc 1 khối liên tục rồi kéo giã
 cho khớp tổng thời lượng" bằng cơ chế **theo từng nhịp**: gom ASR segment
 thành các *dubbing unit* theo khoảng lặng thật của video gốc, sinh kịch bản
 dịch/viết lại đúng 1 dòng cho mỗi unit, gọi TTS riêng từng unit, chỉ **tăng
-tốc cục bộ** trong biên `atempo ∈ [1.0, 1.4]` khi unit tràn khung (không bao
+tốc cục bộ** trong biên `atempo ∈ [1.0, 1.25]` khi unit tràn khung (không bao
 giờ đọc chậm để lấp khung — đó chính là root cause), rồi ghép timeline có
 khoảng lặng thật giữa các unit; unit tràn đẩy lùi unit kế tiếp thay vì bị cắt
 (FR-009). Kèm 2 hệ quả trực tiếp: lỗi TTS 1 unit không còn làm hỏng cả job
@@ -58,9 +58,10 @@ tự (không song song) để không phá vỡ giới hạn quota/phút đã bi�
 (README đã ghi nhận lỗi "exceeded your current quota").
 
 **Constraints**: Giữ nguyên biên tốc độ đã có, không nới (spec Assumptions) —
-trần dùng chung `atempo ≤ 1.4` lấy từ biên hẹp nhất (`edge-tts +40%`), sàn
-`1.0` do chính tính năng này áp đặt. Máy chạy Docker ~2.8GB RAM (ghi nhận ở
-003) — không đổi vì không thêm model/AI mới.
+trần dùng chung `atempo ≤ 1.25` (ban đầu chốt `1.4` theo biên hẹp nhất
+`edge-tts +40%`, hạ xuống `1.25` sau phản hồi người dùng nghe thật thấy nhanh
+— T043), sàn `1.0` do chính tính năng này áp đặt. Máy chạy Docker ~2.8GB RAM
+(ghi nhận ở 003) — không đổi vì không thêm model/AI mới.
 
 **Scale/Scope**: Không đổi — 1 job xử lý tại 1 thời điểm, video ngắn dạng
 TikTok/Douyin/YouTube Shorts. Phạm vi code: 1 module mới + sửa 6 file có sẵn.
@@ -114,7 +115,7 @@ video-dubbing-pipeline/
   tts/
     segment_synthesizer.py   # MỚI — trái tim của feature: gom unit → gọi TTS từng
                               #   unit (adapter chung 3 provider, 2 lần thử) → atempo
-                              #   [1.0,1.4] → ghép timeline có khoảng lặng thật →
+                              #   [1.0,1.25] → ghép timeline có khoảng lặng thật →
                               #   ghi voice.wav + voice_timeline.json + captions.json
     edge_tts_client.py        # − synthesize(), − _collect_captions(),
                               #   − _stream_sentence_boundaries(), − collect_captions

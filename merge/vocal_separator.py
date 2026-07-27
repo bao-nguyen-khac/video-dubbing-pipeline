@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -33,7 +34,17 @@ def extract_background_music(source_video_path: str | Path, job_dir: Path) -> Pa
     if background_path.exists() and background_path.stat().st_size > 0:
         return background_path
 
-    if shutil.which("demucs") is None:
+    # T039 (005): shutil.which("demucs") chỉ tìm trong PATH hiện tại — nếu
+    # chạy .venv/bin/python trực tiếp mà không activate venv (PATH không có
+    # .venv/bin), demucs vẫn tồn tại ngay cạnh sys.executable nhưng bị bỏ
+    # sót, khiến FR-010 (giữ nhạc nền) im lặng mất. Thử PATH trước, fallback
+    # sang thư mục chứa sys.executable.
+    demucs_cmd = shutil.which("demucs")
+    if demucs_cmd is None:
+        venv_demucs = Path(sys.executable).parent / "demucs"
+        if venv_demucs.exists():
+            demucs_cmd = str(venv_demucs)
+    if demucs_cmd is None:
         print("[vocal_separator] Không tìm thấy lệnh 'demucs' trong PATH, bỏ qua tách nhạc nền")
         return None
 
@@ -45,7 +56,7 @@ def extract_background_music(source_video_path: str | Path, job_dir: Path) -> Pa
 
         result = subprocess.run(
             [
-                "demucs",
+                demucs_cmd,
                 "--two-stems", "vocals",
                 "-n", "htdemucs",
                 "-o", str(separated_dir),

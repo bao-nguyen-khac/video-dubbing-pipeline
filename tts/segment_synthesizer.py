@@ -11,7 +11,7 @@ Luồng xử lý (research.md §3/§4):
    từ ASR và nội dung đã dịch/viết lại).
 2. Với mỗi unit: gọi TTS ở tốc độ mặc định qua adapter chung của provider →
    chuẩn hoá WAV → đo thời lượng → nếu TRÀN khung thì tăng tốc cục bộ bằng
-   ffmpeg `atempo` trong `[1.0, 1.4]`. KHÔNG BAO GIỜ đọc chậm (`tempo < 1.0`)
+   ffmpeg `atempo` trong `[1.0, 1.25]`. KHÔNG BAO GIỜ đọc chậm (`tempo < 1.0`)
    để lấp khung — đó chính là lỗi đang sửa.
 3. Ghép timeline: đặt mỗi unit tại `max(start_gốc, hết_unit_trước)` và chèn
    khoảng lặng THẬT vào các quãng trống (FR-002, FR-008); unit tràn đẩy lùi
@@ -42,11 +42,14 @@ _SAMPLE_RATE = 44100
 _CHANNELS = 2
 _SAMPLE_WIDTH = 2  # bytes → pcm_s16le
 
-# Biên chỉnh tốc độ theo từng unit (research.md §3). Trần 1.4 lấy đúng biên
-# trên hẹp nhất đang có (edge-tts rate +40%) nên không nới biên của provider
-# nào, đồng thời cho hành vi giống hệt nhau giữa 3 provider (SC-004).
+# Biên chỉnh tốc độ theo từng unit (research.md §3, hạ trần 1.4→1.25 theo yêu
+# cầu người dùng sau khi nghe thật thấy Vivibe đọc nhanh — T043). Trần thấp
+# hơn khiến câu tràn khung nhiều bị đẩy lùi (khoảng lặng dồn sang sau) thay vì
+# đọc nhanh, đổi lại job có thể dài hơn video gốc một chút ở những câu tràn
+# nặng — cùng đánh đổi đã ghi trong spec.md FR-009. Áp dụng như nhau cho cả 3
+# provider (SC-004).
 _MIN_TEMPO = 1.0
-_MAX_TEMPO = 1.4
+_MAX_TEMPO = 1.25
 _TEMPO_TOLERANCE = 0.15  # tràn dưới ngưỡng này (giây) thì không chỉnh
 
 # Số lần thử tổng hợp cho mỗi unit trước khi thay bằng khoảng lặng (FR-006)
@@ -518,8 +521,8 @@ def synthesize_segments(
 def _write_captions(timeline: dict, captions_path: Path) -> None:
     """
     Ghi `captions.json` từ timeline thực tế — nguồn duy nhất cho phụ đề động ở
-    CẢ 3 provider (FR-011, thay hoàn toàn cơ chế SentenceBoundary streaming
-    riêng của edge-tts trước đây).
+    CẢ 3 provider (FR-011, thay hoàn toàn cơ chế bắt mốc câu qua sự kiện
+    streaming riêng của edge-tts trước đây).
 
     Unit `status="failed"` không sinh cue: không có giọng đọc thì không hiện
     phụ đề.

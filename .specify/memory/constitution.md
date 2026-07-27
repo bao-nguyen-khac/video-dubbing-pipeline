@@ -1,14 +1,14 @@
 <!--
 Sync Impact Report
-- Version change: 1.4.0 → 1.5.0
-- Modified principles: none
+- Version change: 1.5.0 → 1.6.0
+- Modified principles: VI. Agentic Harness Discipline — thêm 1 quy tắc kỷ
+  luật test/verify TTS (mặc định chỉ dùng edge-tts, tránh tốn credit/quota
+  thật của LucyAI/Vivibe và 9router TTS trừ khi cần thiết; Vivibe MUST hỏi
+  người dùng trước mỗi lượt gọi thật)
 - Added sections: none
 - Removed sections: none
-- Modified technology: TTS — thêm provider thứ 3 "9router TTS" (giọng Gemini,
-  qua đúng endpoint OpenAI-compatible `/v1/audio/speech` của 9router đã dùng
-  cho script_gen) — tái dùng `ROUTER_BASE_URL`/`ROUTER_API_KEY` có sẵn, không
-  cần secret riêng, khác LucyAI/Vivibe phải có key riêng của người dùng
-- Templates requiring updates: không có template nào cần đổi
+- Templates requiring updates: không có template nào cần đổi (quy tắc mới
+  chỉ ảnh hưởng hành vi verify, không đổi cấu trúc plan/spec/tasks template)
 - Follow-up TODOs: none
 -->
 
@@ -68,6 +68,15 @@ ngặt, không "vibe coding":
 - Trạng thái mỗi job/run pipeline MUST truy vết được qua file trung gian (xem
   Project Structure) để agent hoặc người ở bước sau audit lại được quyết định của
   bước trước.
+- Khi verify/test tính năng liên quan giọng đọc (TTS) qua nhiều provider,
+  agent MẶC ĐỊNH chỉ dùng **edge-tts** (miễn phí, không giới hạn) cho các
+  lượt test/thử nghiệm lặp lại. KHÔNG tự ý gọi thật LucyAI/Vivibe (tốn credit
+  trả phí thật của người dùng) hoặc 9router TTS (dùng chung quota giới hạn
+  theo phút, đã ghi nhận lỗi "exceeded your current quota" nhiều lần) trừ khi
+  cần xác nhận riêng hành vi đặc thù của đúng provider đó. Với LucyAI/Vivibe,
+  agent MUST hỏi xin phép người dùng trước mỗi lượt gọi thật (kể cả nghe thử
+  hay chạy job đầy đủ) vì mỗi lượt tốn credit thật, không giả định được đồng
+  ý từ 1 lần cho phép trước đó.
 
 Rationale: khi hai agent khác nhau chia nhau việc lên plan và viết code, thiếu kỷ
 luật harness sẽ dẫn tới lệch phạm vi, task không verify được, và mất khả năng audit
@@ -121,4 +130,4 @@ Versioning theo semver: MAJOR khi đổi framework nền tảng (vd đổi ngôn
 Python); MINOR khi thêm/đổi 1 công nghệ trong bảng Technology Stack hoặc thêm
 principle mới; PATCH khi chỉnh sửa câu chữ/làm rõ nghĩa không đổi quy tắc.
 
-**Version**: 1.5.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-26
+**Version**: 1.6.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-27

@@ -87,6 +87,31 @@ thành nhiều dòng, không bỏ sót dòng nào, kể cả dòng chỉ có 1-2
 dòng theo định dạng "[n] bản dịch", không thêm giải thích/tiêu đề nào khác."""
 )
 
+# 005-natural-pause-dubbing (T036): bản dịch EN→VI đo được dài hơn khung
+# thời gian gốc trung bình ~13% (tiếng Việt cần nhiều âm tiết hơn để diễn đạt
+# cùng nghĩa) — khiến nhiều nhịp phải tăng tốc `atempo` vượt SC-002. Thêm
+# ngân sách ký tự riêng từng nhịp, NHƯNG khác hẳn cơ chế toàn-bài cũ của 003
+# (đã bị gỡ vì làm model cắt bớt nội dung — research.md §2): ở đây ngân sách
+# CHỈ được phép ảnh hưởng CÁCH diễn đạt (chọn từ ngắn gọn hơn khi nghĩa tương
+# đương), KHÔNG được phép bỏ bớt Ý để đạt con số — bản dịch vẫn phải đầy đủ,
+# sát nghĩa như `SEGMENT_TRANSLATE_SYSTEM` gốc. Dùng riêng cho
+# `script_mode="translate"` (qua `generate_script()`), KHÔNG áp dụng cho
+# `script_mode="subtitle"` (`generate_subtitle_script()` không lồng tiếng
+# nên không có áp lực khớp thời lượng, ép ngân sách ở đó chỉ có hại).
+SEGMENT_TRANSLATE_BUDGET_SYSTEM = (
+    SEGMENT_TRANSLATE_SYSTEM
+    + """
+
+Mỗi dòng đầu vào có định dạng "[n] (~N ký tự) văn bản gốc". "(~N ký tự)" là
+độ dài mục tiêu để bản dịch đọc vừa khung thời gian của câu gốc đó — nếu có
+nhiều cách diễn đạt cùng nghĩa, hãy ưu tiên cách ngắn gọn, tự nhiên hơn, đừng
+viết dài hơn nhiều lần con số này. TUYỆT ĐỐI KHÔNG được bỏ bớt ý/nội dung để
+đạt ngân sách — bản dịch vẫn phải đầy đủ, sát nghĩa như yêu cầu ở trên; ngân
+sách chỉ là gợi ý về CÁCH diễn đạt, không phải lý do để cắt nghĩa. TUYỆT ĐỐI
+KHÔNG chép lại "(~N ký tự)" vào kết quả, vì kết quả sẽ được đọc thành tiếng
+nguyên văn."""
+)
+
 # 005-natural-pause-dubbing (US2/FR-004): chế độ Sáng tạo cũng phải sinh nội
 # dung theo đúng số nhịp/thứ tự của khung thời gian ASR gốc, để dùng chung cơ
 # chế khớp nhịp với chế độ Dịch chuẩn. Giữ nguyên tinh thần viết lại sáng tạo
@@ -269,7 +294,7 @@ def generate_script(
     print(f"[router_client] Gom {len(transcript_data.get('segments', []))} segment ASR → {len(units)} nhịp lồng tiếng")
 
     if mode == "translate":
-        cues = translate_segments(units)
+        cues = translate_segments(units, apply_budget=True)  # T036
     else:
         cues = rewrite_segments(units)
 
@@ -448,7 +473,7 @@ def _segment_source_text(seg: dict) -> str:
     return (seg.get("source_text") or seg.get("text") or "").strip()
 
 
-def translate_segments(segments: list[dict]) -> list[dict]:
+def translate_segments(segments: list[dict], apply_budget: bool = False) -> list[dict]:
     """
     Dịch sát nghĩa từng segment/nhịp, giữ nguyên start/end gốc. Gọi 1 lần API
     duy nhất cho toàn bộ danh sách (đánh số dòng) để LLM có ngữ cảnh xuyên
@@ -459,6 +484,12 @@ def translate_segments(segments: list[dict]) -> list[dict]:
 
     Args:
         segments: List[{"start", "end", "text" | "source_text"}].
+        apply_budget: T036 (005) — chỉ bật cho `script_mode="translate"`
+            (qua `generate_script()`). Thêm ngân sách ký tự riêng từng dòng
+            (`SEGMENT_TRANSLATE_BUDGET_SYSTEM`) để giảm tỉ lệ nhịp phải tăng
+            tốc `atempo` do bản dịch EN→VI dài hơn khung gốc (SC-002). KHÔNG
+            bật cho `script_mode="subtitle"` — mode đó không lồng tiếng nên
+            không có áp lực khớp thời lượng.
 
     Returns:
         List[{"start": float, "end": float, "source_text": str,
@@ -472,11 +503,24 @@ def translate_segments(segments: list[dict]) -> list[dict]:
     if not segments:
         return []
 
-    numbered_input = "\n".join(
-        f"[{i + 1}] {_segment_source_text(seg)}" for i, seg in enumerate(segments)
-    )
-    raw = _chat_completion(SEGMENT_TRANSLATE_SYSTEM, numbered_input, temperature=0.3)
+    if apply_budget:
+        lines = []
+        for i, seg in enumerate(segments):
+            budget = estimate_target_char_budget(float(seg["end"]) - float(seg["start"]))
+            budget_hint = f"(~{budget} ký tự) " if budget else ""
+            lines.append(f"[{i + 1}] {budget_hint}{_segment_source_text(seg)}")
+        numbered_input = "\n".join(lines)
+        system_prompt = SEGMENT_TRANSLATE_BUDGET_SYSTEM
+    else:
+        numbered_input = "\n".join(
+            f"[{i + 1}] {_segment_source_text(seg)}" for i, seg in enumerate(segments)
+        )
+        system_prompt = SEGMENT_TRANSLATE_SYSTEM
+
+    raw = _chat_completion(system_prompt, numbered_input, temperature=0.3)
     translations = _parse_numbered_lines(raw)
+    if apply_budget:
+        translations = [_strip_budget_hint(t) for t in translations]
 
     if len(translations) != len(segments):
         raise RuntimeError(
@@ -545,17 +589,22 @@ def rewrite_segments(units: list[dict]) -> list[dict]:
     ]
 
 
-_BUDGET_HINT_RE = re.compile(r"^\(\s*~?\s*\d+\s*ký\s*tự\s*\)\s*", re.IGNORECASE)
+_BUDGET_HINT_RE = re.compile(r"\s*\(\s*~?\s*\d+\s*ký\s*tự\s*\)\s*", re.IGNORECASE)
 
 
 def _strip_budget_hint(line: str) -> str:
     """
-    Bỏ tiền tố "(~N ký tự)" nếu model chép nguyên chỉ dẫn ngân sách ký tự vào
-    kết quả viết lại — đã gặp thật với `google/gemini-2.5-flash` (model
-    OpenRouter dự phòng). Prompt đã cấm chép, đây là lớp chặn cuối: lọt xuống
-    TTS thì giọng đọc sẽ đọc thành tiếng "khoảng 33 ký tự ..." ngay trong video.
+    Bỏ chỉ dẫn "(~N ký tự)" nếu model chép nguyên vào kết quả viết lại — đã
+    gặp thật với `google/gemini-2.5-flash` (model OpenRouter dự phòng).
+    Prompt đã cấm chép, đây là lớp chặn cuối: lọt xuống TTS thì giọng đọc sẽ
+    đọc thành tiếng "khoảng 33 ký tự ..." ngay trong video.
+
+    T040 (005): không neo `^` — model có thể chèn chỉ dẫn vào GIỮA câu, không
+    chỉ ở đầu dòng, nên phải quét khớp ở bất kỳ vị trí nào trong `line`
+    (`re.sub` mặc định đã thay hết mọi lần khớp không chồng lấn, không chỉ
+    lần đầu).
     """
-    return _BUDGET_HINT_RE.sub("", line).strip()
+    return _BUDGET_HINT_RE.sub(" ", line).strip()
 
 
 def _parse_numbered_lines(raw: str) -> list[str]:

@@ -134,7 +134,16 @@ vi giữ nhạc nền của 003 không được đổi.
 
 So 3 job của mục FR-011 với nhau: số unit bằng nhau, vị trí khoảng lặng lệch
 ≤0.5s giữa các provider, và không provider nào có unit `tempo < 1.0` hay
-`tempo > 1.4`.
+`tempo > 1.25` (T043, hạ từ `1.4`).
+
+**T037 (làm rõ, 2026-07-27)**: "vị trí khoảng lặng" đo theo mốc **Kết thúc**
+của mỗi unit (`voice_timeline.json.segments[i].end` — lúc câu kế tiếp bắt
+đầu), KHÔNG phải mốc Bắt đầu. Lý do: mỗi unit neo `start = max(source_start,
+end_của_unit_trước)` (research.md §4) nên phần dư khi provider đọc nhanh hơn
+khung luôn dồn thành khoảng lặng **đuôi** của chính unit đó — đo theo mốc kết
+thúc phản ánh đúng cái người nghe thực sự cảm nhận (khoảng lặng dừng lại lúc
+nào), còn đo theo mốc bắt đầu sẽ lẫn cả phần lệch tốc độ đọc của TỪNG
+provider (không phải sai lệch vị trí ngắt nghỉ thật) vào phép so sánh.
 
 ## Web UI
 

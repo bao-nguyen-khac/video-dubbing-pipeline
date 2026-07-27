@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -56,6 +55,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _generate_job_id() -> str:
+    """
+    Sinh job_id mặc định dạng `job-YY-MM-DD-HH-mm-sss` (giờ local máy chạy,
+    `sss` = milisecond) để người dùng phân biệt job theo thời điểm tạo thay
+    vì UUID ngẫu nhiên không đọc được. Dùng chung cho cả CLI (`pipeline.py`)
+    và web UI (`jobs_api.py` không tự sinh job_id riêng, luôn để
+    `create_job()` sinh mặc định).
+    """
+    now = datetime.now()
+    return f"job-{now.strftime('%y-%m-%d-%H-%M')}-{now.microsecond // 1000:03d}"
+
+
 def create_job(
     url: str,
     platform: str,
@@ -75,7 +86,7 @@ def create_job(
     script_mode là 'translate'/'rewrite'. voice_id=None → bước synthesizing
     tự resolve về giọng mặc định của provider tương ứng.
     """
-    jid = job_id or str(uuid.uuid4())
+    jid = job_id or _generate_job_id()
     job_dir = JOBS_DIR / jid
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -296,7 +307,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--job-id",
         dest="job_id",
         default=None,
-        help="UUID của job đã tồn tại để resume; để trống → tạo job mới",
+        help="job_id đã tồn tại để resume; để trống → tạo job mới",
     )
     return parser.parse_args(argv)
 
@@ -489,6 +500,10 @@ def run_pipeline(
             active_voice_id = job.get("voice_id") or (
                 DEFAULT_VOICE if active_provider == "edge-tts" else None
             )
+            # T035 (005): đọc từ job.json khi resume, giống tts_provider/
+            # voice_id — trước đó chỉ dùng tham số CLI nên resume --job-id
+            # mà quên gõ lại --dynamic-captions sẽ âm thầm mất phụ đề động
+            active_dynamic_captions = job.get("dynamic_captions", dynamic_captions)
             print(f"[pipeline][{jid}] Bắt đầu synthesizing (provider={active_provider}, voice={active_voice_id})...")
             try:
                 source_duration = get_media_duration(job["artifacts"]["source_video"])
@@ -511,7 +526,7 @@ def run_pipeline(
                     job_dir,
                     provider=active_provider,
                     voice_id=active_voice_id,
-                    dynamic_captions=dynamic_captions,
+                    dynamic_captions=active_dynamic_captions,
                 )
 
                 failed_count = timeline.get("failed_count", 0)
@@ -582,7 +597,11 @@ def run_pipeline(
                     background_audio_path=background_path,
                 )
                 subtitles_burned = False
-                if dynamic_captions:
+                # T035 (005): đọc từ job.json khi resume, cùng lý do như ở
+                # bước synthesizing — job đã reload ở dòng 550 nên field mới
+                # nhất luôn có sẵn
+                active_dynamic_captions = job.get("dynamic_captions", dynamic_captions)
+                if active_dynamic_captions:
                     # US4: burn phụ đề động LÊN TRÊN kết quả đã ghép; lỗi ở
                     # đây CHỈ cảnh báo, KHÔNG fail job (nội dung lồng tiếng
                     # vẫn có giá trị dù thiếu caption, khác US3)

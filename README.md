@@ -113,7 +113,7 @@ Giọng đọc được tổng hợp **theo từng nhịp** chứ không phải 
 pipeline gom các đoạn ASR thành "nhịp nói" theo đúng chỗ video gốc ngắt nghỉ,
 dịch/viết lại mỗi nhịp một dòng, rồi đặt từng nhịp vào đúng khung thời gian
 của nó và chèn **khoảng lặng thật** vào các quãng nghỉ. Mỗi nhịp chỉ được
-**tăng tốc nhẹ** khi đọc tràn khung (tối đa 1.4×) — không bao giờ đọc chậm để
+**tăng tốc nhẹ** khi đọc tràn khung (tối đa 1.25×) — không bao giờ đọc chậm để
 lấp cho vừa khít, vì đó chính là nguyên nhân khiến bản lồng tiếng cũ nghe chậm
 và liền một mạch.
 

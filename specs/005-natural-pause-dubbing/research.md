@@ -78,10 +78,13 @@ mặc định**, đo thời lượng thật bằng `ffprobe`, rồi khớp khung
 - `tempo ≥ 1.0` — CHỈ tăng tốc khi tràn khung, **không bao giờ kéo chậm**
   (`tempo < 1.0`) để lấp khung: đọc chậm để "vừa khít" chính là root cause
   của lỗi đang sửa. Thiếu thời lượng → để lại khoảng lặng thật.
-- `tempo ≤ _MAX_TEMPO = 1.4` — trần dùng chung cho cả 3 provider, lấy đúng
-  biên trên hẹp nhất đang có (`edge-tts rate +40%`), nằm trọn trong biên của
-  Vivibe/9router (`[0.5, 2.0]`) → không nới biên nào (đúng Assumptions của
-  spec) và cho hành vi đồng nhất giữa 3 provider (SC-004).
+- `tempo ≤ _MAX_TEMPO = 1.25` — trần dùng chung cho cả 3 provider. Ban đầu
+  chốt `1.4` (lấy đúng biên trên hẹp nhất lúc đó, `edge-tts rate +40%`); hạ
+  xuống `1.25` sau khi người dùng nghe thật thấy Vivibe đọc nhanh ở các nhịp
+  chạm trần (T043, 2026-07-27) — quyết định trực tiếp của người dùng, không
+  phải suy luận từ dữ liệu đo. Vẫn nằm trọn trong biên của Vivibe/9router
+  (`[0.5, 2.0]`) nên không cần nới biên nào khác, và vẫn cho hành vi đồng nhất
+  giữa 3 provider (SC-004).
 - Bỏ qua chỉnh khi tràn dưới `_TEMPO_TOLERANCE = 0.15` giây.
 
 **Rationale**: tham số tốc độ của 2/3 provider đã được verify thật là không

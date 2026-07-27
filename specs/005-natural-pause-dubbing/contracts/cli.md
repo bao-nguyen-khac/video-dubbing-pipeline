@@ -16,7 +16,7 @@ Không thêm/bớt/đổi tên flag nào. Tính năng này đổi *cách* bướ
 làm việc, không đổi giao diện gọi.
 
 **Ngưỡng kỹ thuật là hằng số trong code, KHÔNG expose ra CLI** (`0.30s` gộp
-segment, `1.20s` unit tối thiểu, `15.0s` unit tối đa, `atempo ∈ [1.0, 1.4]`)
+segment, `1.20s` unit tối thiểu, `15.0s` unit tối đa, `atempo ∈ [1.0, 1.25]`)
 — giữ đúng Constitution Principle V, tránh phình bề mặt tham số cho thứ người
 dùng không có cơ sở để chỉnh.
 

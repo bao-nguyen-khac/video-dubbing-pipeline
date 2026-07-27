@@ -104,11 +104,6 @@ def main() -> int:
         f"   Chạy tiếp: .venv/bin/python pipeline.py --url {fake_url} "
         f"--script-mode {args.script_mode} --job-id {args.job_id}{captions_flag}"
     )
-    if args.dynamic_captions:
-        print(
-            "   ⚠ Phải gõ lại --dynamic-captions ở lệnh trên: pipeline.py hiện "
-            "KHÔNG đọc cờ này từ job.json khi resume (xem T035)."
-        )
     return 0
 
 

@@ -29,6 +29,31 @@ def list_voices() -> list[dict]:
     return [{"voice_id": v, "name": v} for v in _VOICES]
 
 
+def is_available(timeout: float = 3.0) -> bool:
+    """
+    Kiểm tra nhanh 9router có phản hồi không (T041, 005) — `list_voices()`
+    hardcode nên trước đây `GET /api/voices` vẫn liệt kê đủ 30 giọng dù
+    9router đã chết, khiến job chỉ báo lỗi ở bước `synthesizing` sau khi đã
+    tốn download/ASR/script. Timeout ngắn vì đây chỉ là gợi ý hiển thị, không
+    chặn job (job vẫn tự báo lỗi rõ ràng nếu health-check này sai).
+    """
+    import httpx
+
+    base_url = os.environ.get("ROUTER_BASE_URL", "http://localhost:20128/v1")
+    api_key = os.environ.get("ROUTER_API_KEY", "")
+    if not api_key:
+        return False
+    try:
+        response = httpx.get(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
+        return response.status_code < 500
+    except httpx.HTTPError:
+        return False
+
+
 def synthesize_text(text: str, voice_id: str, output_path: str | Path) -> Path:
     """Sinh audio trực tiếp từ text — dùng cho nghe thử (US2, 004)."""
     output_path = Path(output_path)

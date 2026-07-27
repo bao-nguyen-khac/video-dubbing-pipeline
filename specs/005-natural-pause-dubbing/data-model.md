@@ -84,7 +84,7 @@ ghép. Là nguồn duy nhất cho `captions.json` (FR-011) và cho resume bướ
 |---|---|---|
 | `source_start` / `source_end` | float | Khung thời gian gốc của unit (từ ASR) |
 | `start` / `end` | float | Vị trí **thực tế** trong `voice.wav`; `start = max(source_start, end_của_unit_trước)` (FR-009) |
-| `tempo` | float | Hệ số `atempo` đã áp, luôn trong `[1.0, 1.4]`; `1.0` = không chỉnh |
+| `tempo` | float | Hệ số `atempo` đã áp, luôn trong `[1.0, 1.25]`; `1.0` = không chỉnh |
 | `status` | `"ok"` \| `"failed"` | `"failed"` = TTS lỗi sau 2 lần thử, đoạn này là khoảng lặng dài `source_end - source_start` (FR-006) |
 | `failed_count` | int | Số unit `status="failed"`; `== len(segments)` → job phải fail (không ghi file) |
 

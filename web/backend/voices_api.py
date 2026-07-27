@@ -61,16 +61,24 @@ async def list_voices():
         except RuntimeError as e:
             print(f"[voices_api] Lấy danh sách giọng Vivibe thất bại: {e}")
 
-    # router-tts tái dùng ROUTER_API_KEY đã có (không cần secret riêng) — chỉ
-    # ẩn nếu 9router hoàn toàn chưa cấu hình
+    # router-tts tái dùng ROUTER_API_KEY đã có (không cần secret riêng). Trước
+    # T041 (005), list_voices() hardcode nên vẫn liệt kê đủ 30 giọng dù
+    # 9router chết — người dùng chọn xong job mới báo lỗi ở synthesizing, sau
+    # khi đã tốn download/ASR/script. Thêm health-check timeout ngắn: 9router
+    # không phản hồi → ẩn hẳn router-tts khỏi danh sách thay vì để job chết
+    # muộn (cùng cách lucyai đã "graceful degrade" ở khối phía trên).
     if os.environ.get("ROUTER_API_KEY", ""):
+        from tts.router_tts_client import is_available as router_tts_is_available
         from tts.router_tts_client import list_voices as router_tts_list_voices
 
-        router_voices = await asyncio.to_thread(router_tts_list_voices)
-        voices += [
-            {"provider": "router-tts", "voice_id": v["voice_id"], "name": v["name"]}
-            for v in router_voices
-        ]
+        if await asyncio.to_thread(router_tts_is_available):
+            router_voices = await asyncio.to_thread(router_tts_list_voices)
+            voices += [
+                {"provider": "router-tts", "voice_id": v["voice_id"], "name": v["name"]}
+                for v in router_voices
+            ]
+        else:
+            print("[voices_api] 9router không phản hồi, ẩn giọng router-tts khỏi danh sách")
 
     return {"voices": voices}
 

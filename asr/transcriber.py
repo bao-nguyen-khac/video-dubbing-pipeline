@@ -18,6 +18,30 @@ _WHISPER_MODEL = "small"
 _WHISPER_DEVICE = "cpu"
 _WHISPER_COMPUTE_TYPE = "int8"  # Tối ưu tốc độ trên CPU
 
+# VAD (lọc khoảng im lặng) mặc định của faster-whisper dùng
+# min_silence_duration_ms=2000 — chỉ coi là ngắt nghỉ khi im lặng ≥2 giây, nên
+# nhiều câu ngắt quãng thật (hít thở, chuyển ý, <2s) bị gộp chung thành 1
+# segment dài (VD "This is inside, this is the weirdest airport exit, this
+# is a bit of a ghost town..." gộp thành 1 segment 11.6s dù thực chất là 3-4
+# câu ngắt quãng). Vì 005-natural-pause-dubbing dựa hẳn vào mốc segment ASR để
+# xác định vị trí khoảng lặng thật (group_segments(), _GAP_SILENCE_THRESHOLD=
+# 0.30s), segment quá thô làm dubbing unit gộp sai, khiến bản dịch cho cả
+# unit dài đọc xong sớm rồi im lặng bất thường giữa chừng (job người dùng báo
+# lỗi: 60.5s dựng được so với 72.1s gốc — thiếu 11.5s). Hạ ngưỡng xuống 300ms
+# để khớp đúng `_GAP_SILENCE_THRESHOLD` phía script_gen — ASR cắt segment ở
+# mọi khoảng lặng ≥0.3s, còn việc gộp lại thành nhịp nói tự nhiên vẫn do
+# group_segments() lo (nên không sợ vụn quá — segment quá ngắn/gần nhau vẫn
+# được gộp lại đúng logic đã có).
+_VAD_MIN_SILENCE_MS = 300
+
+# Hạ VAD chưa xử lý hết: verify thật cho thấy có segment Whisper giữ liền
+# mạch dù bên trong có khoảng trống 11.5s giữa 2 từ ("I'm" ... 11.5s ...
+# "going to get some sleep...") — do tạp âm/gió giữ mức âm lượng trên ngưỡng
+# "có tiếng nói" của VAD suốt đoạn đó, nên VAD không cắt được. `word_timestamps
+# =True` cho mốc thời gian từng từ; `_split_by_word_gaps()` tự cắt thêm segment
+# tại mọi khoảng trống GIỮA 2 TỪ ≥ ngưỡng này, độc lập với quyết định của VAD.
+_WORD_GAP_SPLIT_THRESHOLD = 0.30
+
 
 def transcribe(source_path: str | Path, job_dir: Path) -> Path:
     """
@@ -122,18 +146,55 @@ def _run_whisper(audio_path: Path) -> tuple[list[dict], str]:
         str(audio_path),
         beam_size=5,
         vad_filter=True,  # Lọc khoảng im lặng tự động
+        vad_parameters={"min_silence_duration_ms": _VAD_MIN_SILENCE_MS},
+        word_timestamps=True,  # cải thiện độ chính xác mốc start/end của segment
     )
 
     segments = []
     for seg in raw_segments:
-        segments.append(
-            {
-                "start": round(seg.start, 3),
-                "end": round(seg.end, 3),
-                "text": seg.text,
-            }
-        )
+        segments.extend(_split_by_word_gaps(seg))
 
     # Edge case: video không có lời thoại → trả về transcript rỗng (không raise)
     language = getattr(info, "language", "unknown")
     return segments, language
+
+
+def _split_by_word_gaps(seg) -> list[dict]:
+    """
+    Cắt thêm 1 segment Whisper thành nhiều segment con tại mọi khoảng trống
+    GIỮA 2 TỪ ≥ `_WORD_GAP_SPLIT_THRESHOLD`, độc lập với quyết định của VAD.
+
+    Verify thật phát hiện: model 'small' có thể lẫn tạp âm/gió thành 1 từ ảo
+    ("I'm") cách xa nội dung thật tới 11.5s, khiến segment bị coi là bắt đầu
+    sớm hơn thực tế rất nhiều — VAD không cắt vì mức âm lượng vẫn cao suốt
+    đoạn đó (tạp âm, không phải im lặng thật). Cắt theo khoảng trống giữa từ
+    xử lý đúng CẢ 2 trường hợp: khoảng lặng thật giữa 2 câu, VÀ từ ảo do model
+    nghe nhầm tạp âm — ở cả 2 trường hợp, tách riêng ra vẫn cho kết quả đúng
+    hơn giữ nguyên 1 segment dài sai lệch.
+
+    Nếu segment không có `words` (model/tham số không trả về) thì giữ nguyên
+    y như cũ, không raise.
+    """
+    words = getattr(seg, "words", None)
+    if not words:
+        return [{"start": round(seg.start, 3), "end": round(seg.end, 3), "text": seg.text}]
+
+    result: list[dict] = []
+    current_words = [words[0]]
+    for prev_word, word in zip(words, words[1:]):
+        if word.start - prev_word.end >= _WORD_GAP_SPLIT_THRESHOLD:
+            result.append(_words_to_segment(current_words))
+            current_words = []
+        current_words.append(word)
+    if current_words:
+        result.append(_words_to_segment(current_words))
+
+    return result
+
+
+def _words_to_segment(words: list) -> dict:
+    return {
+        "start": round(words[0].start, 3),
+        "end": round(words[-1].end, 3),
+        "text": "".join(w.word for w in words),
+    }
