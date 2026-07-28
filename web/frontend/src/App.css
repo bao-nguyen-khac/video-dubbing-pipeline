@@ -723,6 +723,35 @@
   flex-wrap: wrap;
 }
 
+/* ── So sánh đầu vào/kết quả (JobDetailPage) ───────────────────────────── */
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compare-grid__label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.compare-grid__item video {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: var(--radius);
+  background: #000;
+  border: 1px solid var(--border);
+}
+
 /* ── Danh sách job ──────────────────────────────────────────────────── */
 
 .job-list {

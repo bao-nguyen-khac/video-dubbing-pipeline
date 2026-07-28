@@ -19,6 +19,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from web.backend import auth  # noqa: E402
 from web.backend.jobs_api import router as jobs_router  # noqa: E402
+from web.backend.publish_api import router as publish_router  # noqa: E402
 from web.backend.voices_api import router as voices_router  # noqa: E402
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -78,6 +79,7 @@ async def logout():
 
 app.include_router(jobs_router, prefix="/api/jobs")
 app.include_router(voices_router, prefix="/api/voices")
+app.include_router(publish_router, prefix="/api/publish")
 
 # Serve React build (nếu đã `npm run build`) làm static site tại "/"
 if FRONTEND_DIST.exists():

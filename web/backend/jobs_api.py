@@ -94,10 +94,40 @@ def _job_to_summary(job: dict) -> dict:
     }
 
 
+def _get_artifact_path(job: dict, artifact_key: str, filename: str) -> Path | None:
+    """
+    Trả về Path thực tế của 1 artifact video, dùng chung cho output_video và
+    source_video.
+
+    job.json lưu đường dẫn tuyệt đối ghi lúc pipeline chạy (vd `/app/jobs/...`
+    nếu job được tạo trong Docker). Nếu backend đang chạy ở môi trường khác
+    (deploy bằng lệnh thay vì Docker, JOBS_DIR trỏ chỗ khác), đường dẫn cũ
+    trong job.json không còn đúng dù file vật lý vẫn nằm trong jobs/{job_id}/
+    hiện tại — fallback về đúng chỗ đó theo JOBS_DIR + tên file cố định.
+    """
+    recorded = job.get("artifacts", {}).get(artifact_key)
+    if recorded and Path(recorded).exists():
+        return Path(recorded)
+    job_id = job.get("job_id")
+    if job_id:
+        fallback = JOBS_DIR / job_id / filename
+        if fallback.exists():
+            return fallback
+    return None
+
+
+def _get_output_video_path(job: dict) -> Path | None:
+    return _get_artifact_path(job, "output_video", "output.mp4")
+
+
+def _get_source_video_path(job: dict) -> Path | None:
+    return _get_artifact_path(job, "source_video", "source.mp4")
+
+
 def _job_to_detail(job: dict) -> dict:
     """Job Detail (data-model.md) — dùng cho GET /api/jobs/{job_id}."""
     detail = _job_to_summary(job)
-    has_output = bool(job["artifacts"].get("output_video"))
+    has_output = _get_output_video_path(job) is not None
     detail.update(
         {
             "script_mode": job["script_mode"],
@@ -113,6 +143,9 @@ def _job_to_detail(job: dict) -> dict:
             "error": job.get("error"),
             "warnings": job.get("warnings", {}),
             "output_video_url": f"/api/jobs/{job['job_id']}/output" if has_output else None,
+            "source_video_url": (
+                f"/api/jobs/{job['job_id']}/source" if _get_source_video_path(job) else None
+            ),
             "can_retry": job["status"] == "failed",
         }
     )
@@ -190,11 +223,29 @@ async def get_job_output(job_id: str):
     except FileNotFoundError:
         return _error(404, "Job không tồn tại")
 
-    output_path = job["artifacts"].get("output_video")
-    if not output_path or not Path(output_path).exists():
+    output_path = _get_output_video_path(job)
+    if not output_path:
         return _error(404, "Job chưa có video output")
 
     return FileResponse(output_path, media_type="video/mp4", filename=f"{job_id}.mp4")
+
+
+@router.get("/{job_id}/source")
+async def get_job_source(job_id: str):
+    """
+    GET /api/jobs/{job_id}/source — stream video gốc đã tải về, để xem song
+    song với video kết quả và so sánh đầu vào/đầu ra.
+    """
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    source_path = _get_source_video_path(job)
+    if not source_path:
+        return _error(404, "Job chưa có video gốc")
+
+    return FileResponse(source_path, media_type="video/mp4", filename=f"{job_id}-source.mp4")
 
 
 @router.post("/{job_id}/retry", status_code=202)

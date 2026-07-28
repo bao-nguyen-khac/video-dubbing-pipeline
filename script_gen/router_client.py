@@ -28,6 +28,21 @@ DEFAULT_MODEL = os.environ.get("ROUTER_MODEL", "gpt-4o-mini")
 # 1 lượt dịch cả transcript dài).
 ROUTER_TIMEOUT = float(os.environ.get("ROUTER_TIMEOUT", "120"))
 
+# Trần token đầu ra mỗi lượt gọi LLM.
+#
+# 4096 (giá trị cũ) là bẫy với model dạng reasoning/agent: đo thật trên
+# `ag/gemini-3-flash-agent` với 29 nhịp, model tiêu 3933/4092 token cho phần
+# SUY LUẬN, chỉ còn ~160 token để trả lời → output bị cắt ngang giữa dòng 7,
+# job chết ở bước scripting sau khi đã tải video + chạy ASR xong. Reasoning
+# token là chi phí gần như cố định mỗi lượt gọi, không tỉ lệ với đầu vào, nên
+# trần phải đủ rộng để chứa cả phần suy luận lẫn phần trả lời.
+ROUTER_MAX_TOKENS = int(os.environ.get("ROUTER_MAX_TOKENS", "16384"))
+
+# Số dòng tối đa gửi trong 1 lượt gọi khi dịch/viết lại theo nhịp. Chia lô để
+# độ dài đầu ra mỗi lượt luôn có trần, dù video dài bao nhiêu nhịp đi nữa —
+# ROUTER_MAX_TOKENS một mình không đủ bảo đảm với video dài.
+_SEGMENT_CHUNK_SIZE = int(os.environ.get("ROUTER_SEGMENT_CHUNK_SIZE", "25"))
+
 # Fallback khi 9router không kết nối được (timeout/refused/HTTP lỗi): gọi
 # OpenRouter — cũng là endpoint OpenAI-compatible nên dùng lại nguyên luồng
 # gọi, chỉ khác base_url/key/model. Chỉ bật khi OPENROUTER_API_KEY có trong
@@ -49,6 +64,19 @@ _GAP_SILENCE_THRESHOLD = 0.30   # khoảng trống nhỏ hơn = KHÔNG phải ng
 _MIN_UNIT_DURATION = 1.20       # unit ngắn hơn thì gộp tiếp (tránh vụn câu)
 _MAX_UNIT_DURATION = 15.0       # trần gộp — giữ tính "theo câu"
 _SHORT_UNIT_MERGE_MAX_GAP = 1.0  # chỉ gộp unit quá ngắn khi khoảng trống < ngưỡng này
+
+# Dấu kết thúc câu, gồm cả dấu toàn chiều rộng của tiếng Trung/Nhật
+_SENTENCE_END_RE = re.compile(r'[.!?…。！？]["\'”’\)\]]*$')
+
+class TruncatedResponseError(RuntimeError):
+    """
+    Output của LLM bị cắt vì chạm trần token (`finish_reason="length"`).
+
+    Tách riêng khỏi RuntimeError thường để chỗ gọi phân biệt được "endpoint
+    hỏng" (đáng chuyển sang fallback) với "câu trả lời quá dài" (chuyển
+    endpoint cũng vô ích, phải chia nhỏ hoặc nới trần).
+    """
+
 
 # ─── Prompts ─────────────────────────────────────────────────────────────────
 
@@ -144,21 +172,55 @@ QUAN TRỌNG:
 # ─── Main Function ───────────────────────────────────────────────────────────
 
 
+def _is_sentence_continuation(prev_text: str, next_text: str) -> bool:
+    """
+    Đoán xem `next_text` có phải phần NỐI TIẾP GIỮA CÂU của `prev_text` không.
+
+    Dùng 2 dấu hiệu cùng lúc, vì mỗi dấu hiệu riêng lẻ đều không đủ tin cậy:
+    - Câu trước KHÔNG kết thúc bằng dấu câu, VÀ
+    - Câu sau mở đầu bằng chữ THƯỜNG.
+
+    Chỉ dựa vào dấu câu là hỏng: faster-whisper (model 'small') rất hay bỏ dấu
+    chấm cuối segment — đo trên transcript thật của repo, 169 ranh giới có
+    khoảng trống < 0.30s thì chỉ ~155 ranh giới là hết câu nhưng phần lớn
+    không có dấu chấm nào.
+
+    Với ngôn ngữ không phân biệt hoa/thường (Trung, Nhật, Thái...), `islower()`
+    trả False nên mặc định coi là RANH GIỚI CÂU → giữ tách. Đây là hướng an
+    toàn: giữ đúng nhịp cắt của clip gốc.
+    """
+    if _SENTENCE_END_RE.search(prev_text.strip()):
+        return False
+    nxt = next_text.strip()
+    return bool(nxt) and nxt[0].islower()
+
+
 def group_segments(segments: list[dict]) -> list[dict]:
     """
     Gom ASR segment (`transcript.json.segments`) thành các "dubbing unit" —
     đơn vị nhỏ nhất được dịch/viết lại và tổng hợp giọng đọc độc lập
     (005-natural-pause-dubbing, research.md §1, data-model.md §1).
 
-    Quy tắc gộp segment kế tiếp vào unit đang mở:
-    1. Khoảng trống < `_GAP_SILENCE_THRESHOLD` (0.30s) → không phải ngắt nghỉ
-       thật, gộp (FR-008: không chèn khoảng lặng giả).
+    Nguyên tắc: GIỮ NGUYÊN nhịp cắt của clip gốc, chỉ gộp khi việc tách chắc
+    chắn cho kết quả tệ hơn. Chỉ 2 trường hợp được gộp:
+
+    1. Segment sau là phần NỐI TIẾP GIỮA CÂU của segment trước
+       (`_is_sentence_continuation()`) và khoảng trống < `_GAP_SILENCE_THRESHOLD`
+       (0.30s) → tách ra sẽ đem nửa câu đi dịch riêng, cho ra 2 mẩu tiếng Việt
+       cụt nghĩa.
     2. Unit đang mở còn ngắn hơn `_MIN_UNIT_DURATION` (1.20s) và khoảng trống
        < `_SHORT_UNIT_MERGE_MAX_GAP` (1.0s) → gộp để tránh câu vụn (FR-004).
-    3. Cả 2 quy tắc trên đều bị chặn nếu unit sau khi gộp vượt
-       `_MAX_UNIT_DURATION` (15s) — giữ tính "theo câu", không thoái hoá về
-       cơ chế nguyên khối cũ. Đây là lý do duy nhất khiến 2 unit liền nhau có
-       thể cách nhau < 0.30s.
+
+    Cả 2 đều bị chặn nếu unit sau khi gộp vượt `_MAX_UNIT_DURATION` (15s).
+
+    LƯU Ý (sửa 2026-07-27): trước đây quy tắc 1 gộp MỌI segment cách nhau
+    < 0.30s, không xét ngữ nghĩa. Whisper phát ra các segment liền mạch
+    (gap = 0.0) ngay tại ranh giới CÂU, nên luật cũ nuốt luôn nhịp cắt gốc:
+    đo trên toàn bộ transcript thật của repo, 237 segment ASR bị gom còn 93
+    nhịp (mất 61% ranh giới), sinh ra 40 nhịp dài > 10s. Nhịp càng dài thì
+    bản dịch càng dễ đọc xong sớm rồi im lặng giữa chừng, và phụ đề hiện 1
+    khối chữ dài thay vì bám câu như clip gốc. Sau khi sửa: 204 nhịp, chỉ còn
+    12 nhịp > 10s.
 
     Args:
         segments: List[{"start": float, "end": float, "text": str}] từ
@@ -185,13 +247,15 @@ def group_segments(segments: list[dict]) -> list[dict]:
             current_duration = current["end"] - current["start"]
 
             fits_max = merged_duration <= _MAX_UNIT_DURATION
-            no_real_pause = gap < _GAP_SILENCE_THRESHOLD
+            mid_sentence = gap < _GAP_SILENCE_THRESHOLD and _is_sentence_continuation(
+                current["source_text"], text
+            )
             too_short = (
                 current_duration < _MIN_UNIT_DURATION
                 and gap < _SHORT_UNIT_MERGE_MAX_GAP
             )
 
-            if fits_max and (no_real_pause or too_short):
+            if fits_max and (mid_sentence or too_short):
                 current["end"] = end
                 current["source_text"] = f"{current['source_text']} {text}".strip()
                 continue
@@ -409,14 +473,38 @@ def _call_chat_api(
             {"role": "user", "content": user_message},
         ],
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=ROUTER_MAX_TOKENS,
     )
 
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    content = choice.message.content
     if not content or not content.strip():
         raise RuntimeError(f"Endpoint trả về kết quả rỗng. Kiểm tra model '{model}' còn hoạt động.")
 
+    # Output bị cắt vì chạm trần token. KHÔNG được trả về âm thầm: phần gọi
+    # bên trên sẽ đếm số dòng thiếu rồi báo "model trả về N dòng" — sai nguyên
+    # nhân và khiến người dùng đi tìm nhầm chỗ (đã xảy ra thật, xem
+    # ROUTER_MAX_TOKENS).
+    if getattr(choice, "finish_reason", None) == "length":
+        raise TruncatedResponseError(
+            f"Model '{model}' bị cắt output vì chạm trần {ROUTER_MAX_TOKENS} token"
+            f"{_reasoning_token_note(response)}. Tăng ROUTER_MAX_TOKENS trong .env, "
+            f"hoặc giảm ROUTER_SEGMENT_CHUNK_SIZE (hiện {_SEGMENT_CHUNK_SIZE}) để mỗi "
+            f"lượt gọi phải trả ít dòng hơn."
+        )
+
     return content.strip()
+
+
+def _reasoning_token_note(response) -> str:
+    """Nêu rõ số token đã đốt cho suy luận, nếu endpoint có báo cáo."""
+    usage = getattr(response, "usage", None)
+    details = getattr(usage, "completion_tokens_details", None)
+    reasoning = getattr(details, "reasoning_tokens", None)
+    if not reasoning:
+        return ""
+    completion = getattr(usage, "completion_tokens", None) or 0
+    return f" (trong đó {reasoning}/{completion} token dành cho suy luận nội bộ)"
 
 
 def _chat_completion(system_prompt: str, user_message: str, temperature: float = 0.7) -> str:
@@ -438,6 +526,10 @@ def _chat_completion(system_prompt: str, user_message: str, temperature: float =
             ROUTER_BASE_URL, ROUTER_API_KEY, DEFAULT_MODEL,
             system_prompt, user_message, temperature,
         )
+    except TruncatedResponseError:
+        # Câu trả lời quá dài so với trần token — đổi endpoint không giải quyết
+        # được gì, chỉ tốn thêm 1 lượt gọi. Ném thẳng lên để chỗ gọi chia nhỏ.
+        raise
     except Exception as primary_error:
         fallback = _openrouter_config()
         if fallback is None:
@@ -473,11 +565,84 @@ def _segment_source_text(seg: dict) -> str:
     return (seg.get("source_text") or seg.get("text") or "").strip()
 
 
+def _budget_line(seg: dict) -> str:
+    """Dòng đầu vào kèm ngân sách ký tự riêng của nhịp đó."""
+    budget = estimate_target_char_budget(float(seg["end"]) - float(seg["start"]))
+    hint = f"(~{budget} ký tự) " if budget else ""
+    return f"{hint}{_segment_source_text(seg)}"
+
+
+def _generate_numbered_lines(
+    segments: list[dict],
+    system_prompt: str,
+    build_line,
+    temperature: float,
+    what: str,
+    offset: int = 0,
+) -> list[str]:
+    """
+    Sinh đúng 1 dòng kết quả cho mỗi phần tử `segments`, chia lô và TỰ CHIA ĐÔI
+    lô lỗi thay vì làm hỏng cả job.
+
+    Vì sao cần: cơ chế cũ gửi TOÀN BỘ nhịp trong 1 lượt gọi và bắt buộc số dòng
+    trả về khớp tuyệt đối — chỉ cần 1 lượt trả lời hụt là mất trắng công tải
+    video + chạy ASR. Đã xảy ra thật: model reasoning đốt gần hết trần token
+    cho suy luận rồi bị cắt ở dòng 7/29 (xem ROUTER_MAX_TOKENS).
+
+    Chia đôi đệ quy xử lý được cả 2 nguyên nhân hụt dòng — output quá dài bị
+    cắt, và model tự ý gộp dòng — vì lô càng nhỏ thì cả 2 đều khó xảy ra. Đáy
+    đệ quy là lô 1 dòng: hụt ở mức đó mới thực sự là lỗi.
+    """
+    lines = [f"[{i + 1}] {build_line(seg)}" for i, seg in enumerate(segments)]
+
+    problem: str | None = None
+    try:
+        raw = _chat_completion(system_prompt, "\n".join(lines), temperature=temperature)
+        results = _parse_numbered_lines(raw)
+        if len(results) == len(segments):
+            return results
+        problem = f"trả về {len(results)} dòng, cần {len(segments)}"
+    except TruncatedResponseError as e:
+        problem = str(e)
+
+    if len(segments) == 1:
+        raise RuntimeError(f"{what} thất bại ở nhịp {offset + 1}: {problem}")
+
+    mid = len(segments) // 2
+    print(
+        f"[router_client] {what}: lô nhịp {offset + 1}-{offset + len(segments)} "
+        f"({problem}) — chia đôi và thử lại"
+    )
+    return _generate_numbered_lines(
+        segments[:mid], system_prompt, build_line, temperature, what, offset
+    ) + _generate_numbered_lines(
+        segments[mid:], system_prompt, build_line, temperature, what, offset + mid
+    )
+
+
+def _generate_in_chunks(
+    segments: list[dict],
+    system_prompt: str,
+    build_line,
+    temperature: float,
+    what: str,
+) -> list[str]:
+    """Chia `segments` thành lô `_SEGMENT_CHUNK_SIZE` rồi sinh từng lô."""
+    results: list[str] = []
+    for start in range(0, len(segments), _SEGMENT_CHUNK_SIZE):
+        chunk = segments[start : start + _SEGMENT_CHUNK_SIZE]
+        results.extend(
+            _generate_numbered_lines(chunk, system_prompt, build_line, temperature, what, start)
+        )
+    return results
+
+
 def translate_segments(segments: list[dict], apply_budget: bool = False) -> list[dict]:
     """
-    Dịch sát nghĩa từng segment/nhịp, giữ nguyên start/end gốc. Gọi 1 lần API
-    duy nhất cho toàn bộ danh sách (đánh số dòng) để LLM có ngữ cảnh xuyên
-    suốt thay vì dịch rời rạc từng câu riêng lẻ.
+    Dịch sát nghĩa từng segment/nhịp, giữ nguyên start/end gốc. Gửi theo LÔ
+    (đánh số dòng) để LLM vẫn có ngữ cảnh liền mạch quanh mỗi câu thay vì dịch
+    rời rạc từng câu — xem `_generate_in_chunks()` cho cách chia lô và cơ chế
+    tự chia đôi khi một lô trả hụt dòng.
 
     Dùng cho cả `script_mode="subtitle"` (003, mỗi ASR segment 1 dòng) và
     `script_mode="translate"` (005, mỗi dubbing unit 1 dòng).
@@ -496,37 +661,25 @@ def translate_segments(segments: list[dict], apply_budget: bool = False) -> list
         "translated_text": str}], cùng độ dài và thứ tự với segments đầu vào.
 
     Raises:
-        RuntimeError: Nếu gọi API thất bại, hoặc số dòng trả về không khớp số
-            segment đầu vào (không cố "đoán" ghép sai — thà báo lỗi rõ còn
-            hơn tạo phụ đề/lồng tiếng lệch thời gian).
+        RuntimeError: Nếu gọi API thất bại, hoặc một nhịp ĐƠN LẺ vẫn không
+            dịch được sau khi đã chia nhỏ hết cỡ (không cố "đoán" ghép sai —
+            thà báo lỗi rõ còn hơn tạo phụ đề/lồng tiếng lệch thời gian).
     """
     if not segments:
         return []
 
     if apply_budget:
-        lines = []
-        for i, seg in enumerate(segments):
-            budget = estimate_target_char_budget(float(seg["end"]) - float(seg["start"]))
-            budget_hint = f"(~{budget} ký tự) " if budget else ""
-            lines.append(f"[{i + 1}] {budget_hint}{_segment_source_text(seg)}")
-        numbered_input = "\n".join(lines)
         system_prompt = SEGMENT_TRANSLATE_BUDGET_SYSTEM
+        build_line = _budget_line
     else:
-        numbered_input = "\n".join(
-            f"[{i + 1}] {_segment_source_text(seg)}" for i, seg in enumerate(segments)
-        )
         system_prompt = SEGMENT_TRANSLATE_SYSTEM
+        build_line = _segment_source_text
 
-    raw = _chat_completion(system_prompt, numbered_input, temperature=0.3)
-    translations = _parse_numbered_lines(raw)
+    translations = _generate_in_chunks(
+        segments, system_prompt, build_line, temperature=0.3, what="Dịch theo nhịp"
+    )
     if apply_budget:
         translations = [_strip_budget_hint(t) for t in translations]
-
-    if len(translations) != len(segments):
-        raise RuntimeError(
-            f"Dịch theo segment thất bại: model trả về {len(translations)} dòng, "
-            f"cần đúng {len(segments)} dòng để khớp mốc thời gian ASR gốc."
-        )
 
     return [
         {
@@ -563,20 +716,12 @@ def rewrite_segments(units: list[dict]) -> list[dict]:
     if not units:
         return []
 
-    lines = []
-    for i, unit in enumerate(units):
-        budget = estimate_target_char_budget(float(unit["end"]) - float(unit["start"]))
-        budget_hint = f"(~{budget} ký tự) " if budget else ""
-        lines.append(f"[{i + 1}] {budget_hint}{_segment_source_text(unit)}")
-
-    raw = _chat_completion(SEGMENT_REWRITE_SYSTEM, "\n".join(lines), temperature=0.7)
-    rewrites = [_strip_budget_hint(line) for line in _parse_numbered_lines(raw)]
-
-    if len(rewrites) != len(units):
-        raise RuntimeError(
-            f"Viết lại theo nhịp thất bại: model trả về {len(rewrites)} dòng, "
-            f"cần đúng {len(units)} dòng để khớp mốc thời gian ASR gốc."
+    rewrites = [
+        _strip_budget_hint(line)
+        for line in _generate_in_chunks(
+            units, SEGMENT_REWRITE_SYSTEM, _budget_line, temperature=0.7, what="Viết lại theo nhịp"
         )
+    ]
 
     return [
         {

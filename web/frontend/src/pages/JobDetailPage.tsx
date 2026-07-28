@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, getJob, outputUrl, retryJob, type JobDetail } from "../api/client";
+import { ApiError, getJob, outputUrl, retryJob, sourceUrl, type JobDetail } from "../api/client";
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
 import JobProgress from "../components/JobProgress";
@@ -181,17 +181,27 @@ export default function JobDetailPage() {
           {job.status === "done" && job.output_video_url && (
             <div className="card">
               <div className="card__title">
-                <h2>Kết quả</h2>
+                <h2>So sánh đầu vào / kết quả</h2>
               </div>
-              <div className="result">
-                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                <video src={outputUrl(job.job_id)} controls preload="metadata" />
-                <div className="result__actions">
-                  <a className="btn btn--primary" href={outputUrl(job.job_id)} download>
-                    <IconDownload />
-                    Tải video
-                  </a>
+              <div className="compare-grid">
+                {job.source_video_url && (
+                  <div className="compare-grid__item">
+                    <div className="compare-grid__label">Đầu vào (video gốc)</div>
+                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                    <video src={sourceUrl(job.job_id)} controls preload="metadata" />
+                  </div>
+                )}
+                <div className="compare-grid__item">
+                  <div className="compare-grid__label">Kết quả</div>
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video src={outputUrl(job.job_id)} controls preload="metadata" />
                 </div>
+              </div>
+              <div className="result__actions">
+                <a className="btn btn--primary" href={outputUrl(job.job_id)} download>
+                  <IconDownload />
+                  Tải video
+                </a>
               </div>
             </div>
           )}

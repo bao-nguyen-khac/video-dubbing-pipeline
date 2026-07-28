@@ -1,14 +1,14 @@
 <!--
 Sync Impact Report
-- Version change: 1.5.0 → 1.6.0
+- Version change: 1.6.0 → 1.7.0
 - Modified principles: VI. Agentic Harness Discipline — thêm 1 quy tắc kỷ
-  luật test/verify TTS (mặc định chỉ dùng edge-tts, tránh tốn credit/quota
-  thật của LucyAI/Vivibe và 9router TTS trừ khi cần thiết; Vivibe MUST hỏi
-  người dùng trước mỗi lượt gọi thật)
-- Added sections: none
+  luật cho dịch vụ đăng bài trả phí (Zernio): mọi lượt gọi thật MUST hỏi
+  người dùng trước; test tự động MUST mock HTTP
+- Added sections: Technology Stack — thêm dòng "Đăng bài lên nền tảng"
+  (Zernio) cho feature 006-publish-video-tab
 - Removed sections: none
-- Templates requiring updates: không có template nào cần đổi (quy tắc mới
-  chỉ ảnh hưởng hành vi verify, không đổi cấu trúc plan/spec/tasks template)
+- Templates requiring updates: ✅ không template nào cần đổi (thêm 1 công
+  nghệ + 1 quy tắc verify, không đổi cấu trúc plan/spec/tasks template)
 - Follow-up TODOs: none
 -->
 
@@ -77,6 +77,11 @@ ngặt, không "vibe coding":
   agent MUST hỏi xin phép người dùng trước mỗi lượt gọi thật (kể cả nghe thử
   hay chạy job đầy đủ) vì mỗi lượt tốn credit thật, không giả định được đồng
   ý từ 1 lần cho phép trước đó.
+- Với dịch vụ đăng bài Zernio (xem Technology Stack), agent MUST hỏi xin phép
+  người dùng trước MỖI lượt gọi thật (liên kết kênh, tạo bài đăng) — vừa tốn
+  chi phí thật, vừa tạo bài đăng CÔNG KHAI thật trên kênh của người dùng mà
+  hệ thống này không xoá/sửa lại được. Mọi test tự động MUST mock lớp HTTP,
+  KHÔNG test nào được gọi thật tới Zernio.
 
 Rationale: khi hai agent khác nhau chia nhau việc lên plan và viết code, thiếu kỷ
 luật harness sẽ dẫn tới lệch phạm vi, task không verify được, và mất khả năng audit
@@ -96,6 +101,7 @@ rõ ràng thay vì tin tưởng agent tự giác.
 | Ghép video | ffmpeg | Qua subprocess hoặc ffmpeg-python |
 | Web UI Backend | FastAPI (Python) | Expose API cho React frontend: submit job, poll trạng thái/% tiến trình, danh sách job, resume job lỗi (feature 002-web-ui). Gọi lại các module pipeline hiện có, không viết lại logic xử lý media |
 | Web UI Frontend | ReactJS | Chạy trong browser, gọi Web UI Backend qua HTTP. Node.js/npm chỉ là build-time tooling (xem Principle I), không phải runtime pipeline |
+| Đăng bài lên nền tảng | Zernio (`https://zernio.com/api/v1`) | Dịch vụ trung gian đã được TikTok/YouTube cấp phép đăng bài tự động — dùng cho CẢ luồng OAuth liên kết kênh LẪN đăng video công khai ngay (feature 006-publish-video-tab). Hệ thống này KHÔNG tự xin audit riêng với từng nền tảng và KHÔNG dùng browser automation/giả lập thao tác tay (FR-012). Gọi qua REST bằng `httpx`, xác thực `Authorization: Bearer $ZERNIO_API_KEY` — key riêng của người dùng, đọc từ `.env` (xem `.env.example`). Thiếu key: chỉ tab "Đăng video" báo chưa cấu hình, pipeline xử lý media KHÔNG bị ảnh hưởng. Kỷ luật gọi thật/mock: xem Principle VI |
 
 Thay đổi bất kỳ dòng nào trong bảng này MUST đi qua amend constitution (Governance),
 không được đổi ngầm trong plan.md của từng feature.
@@ -112,6 +118,8 @@ media-generation/
   merge/             # ffmpeg + Demucs (tách/giữ nhạc nền)
   pipeline.py        # điều phối tuần tự, lưu state theo job
   jobs/{job_id}/      # file trung gian: source.mp4, transcript.json, script.json, voice.wav, background.wav, output.mp4
+                     #   + publishes/{attempt_id}.json (lượt đăng, feature 006)
+  publish/            # adapter Zernio + runner đăng bài nền (feature 006)
   web/
     backend/          # FastAPI, gọi lại pipeline.py/module hiện có qua import
     frontend/          # ReactJS SPA (feature 002-web-ui)
@@ -130,4 +138,4 @@ Versioning theo semver: MAJOR khi đổi framework nền tảng (vd đổi ngôn
 Python); MINOR khi thêm/đổi 1 công nghệ trong bảng Technology Stack hoặc thêm
 principle mới; PATCH khi chỉnh sửa câu chữ/làm rõ nghĩa không đổi quy tắc.
 
-**Version**: 1.6.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-27
+**Version**: 1.7.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-27

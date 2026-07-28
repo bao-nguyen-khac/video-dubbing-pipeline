@@ -124,6 +124,24 @@ và liền một mạch.
   bị ảnh hưởng. Chỉ khi toàn bộ nhịp đều lỗi job mới báo thất bại.
 - Mốc thời gian thực tế của từng nhịp được ghi ra `voice_timeline.json` và
   cũng là nguồn của phụ đề động (`--dynamic-captions`) cho cả 3 provider.
+- Nhịp cắt **bám theo clip gốc**: mỗi đoạn ASR giữ nguyên thành một nhịp
+  riêng. Chỉ gộp 2 đoạn khi tách ra chắc chắn hỏng nghĩa — đoạn sau là phần
+  nối tiếp giữa chừng của một câu chưa kết thúc, hoặc nhịp đang mở quá vụn
+  (< 1.2s).
+
+### Ngôn ngữ nguồn của video
+
+Bước nhận dạng giọng nói dùng Whisper — model **đa ngôn ngữ (~99 thứ tiếng)**
+và **tự nhận diện** ngôn ngữ của clip, nên video tiếng Trung/Nhật/Hàn/Thái…
+chạy được ngay, không cần cấu hình gì thêm. Đầu ra luôn là tiếng Việt.
+
+Ngôn ngữ nhận được ghi vào `transcript.json` (`language` + `language_probability`).
+Hai biến trong `.env` để tinh chỉnh khi cần:
+
+| Biến | Khi nào cần |
+|---|---|
+| `WHISPER_LANGUAGE` | Ghim ngôn ngữ nguồn (`zh`, `ja`, `ko`, `vi`…) thay vì để tự đoán. Việc tự đoán chỉ nghe **30 giây đầu** nên dễ sai khi clip mở đầu bằng nhạc/tiếng ồn hoặc nói xen kẽ 2 thứ tiếng — pipeline in cảnh báo khi độ tin cậy < 60% |
+| `WHISPER_MODEL` | Đổi `small` (mặc định) sang `medium`/`large-v3`. `small` đủ tốt cho tiếng Anh nhưng kém rõ rệt với tiếng Trung/Nhật/Hàn; đổi lại chậm hơn nhiều trên CPU |
 
 ### Chọn giọng đọc — edge-tts / Vivibe / 9router (feature 004)
 
@@ -204,11 +222,50 @@ uvicorn web.backend.main:app --host 127.0.0.1 --port 8000
 Mở `http://127.0.0.1:8000`. Chi tiết API, thiết kế và kịch bản validate từng
 user story: [`specs/002-web-ui/`](specs/002-web-ui/).
 
+### Đăng video lên TikTok (feature 006-publish-video-tab)
+
+Tab **Đăng video** trong giao diện web cho phép đăng thẳng video đã xử lý xong
+lên kênh TikTok của bạn — không cần tải file về rồi đăng tay.
+
+Cần thêm 1 dòng vào `.env`:
+
+```bash
+ZERNIO_API_KEY=sk_...
+```
+
+Key lấy ở dashboard [Zernio](https://zernio.com) — dịch vụ trung gian đã được
+nền tảng cấp phép đăng bài tự động, nên video lên **công khai ngay** mà không
+cần tự xin duyệt app riêng và không có rủi ro tài khoản. Không cấu hình key thì
+mọi thứ khác chạy bình thường, chỉ tab Đăng video báo chưa cấu hình.
+
+Cách dùng: mở tab **Đăng video** → "Kết nối kênh TikTok" (cấp quyền ngay trên
+TikTok, chỉ làm 1 lần) → chọn video đã xử lý xong → điền tiêu đề → **Đăng**.
+
+Lưu ý:
+
+- Bài đăng là **công khai thật** và **không sửa/xoá được từ giao diện này** —
+  thao tác đó làm trực tiếp trên app/website của nền tảng.
+- Zernio tính phí theo số kênh đã kết nối.
+- Ngắt kết nối trong tab này chặn mọi lượt đăng tới kênh đó; muốn thu hồi quyền
+  hoàn toàn thì làm thêm trong cài đặt ứng dụng của nền tảng.
+- YouTube Shorts nằm trong phạm vi tính năng nhưng chưa bật ở bản này.
+
+Chi tiết: [`specs/006-publish-video-tab/`](specs/006-publish-video-tab/).
+
 ## Kiểm tra môi trường
 
 ```bash
 python env_check.py
 ```
+
+## Chạy test
+
+```bash
+pytest tests/unit -q
+```
+
+Test của tính năng đăng video luôn mock lớp HTTP — không lượt test nào gọi thật
+tới Zernio (tốn chi phí thật và tạo bài đăng công khai thật).
 
 ## Cấu trúc output
 
@@ -233,6 +290,7 @@ jobs/{job_id}/
 
 - Pipeline CLI (spec, plan, quickstart): [`specs/001-video-repurpose-pipeline/`](specs/001-video-repurpose-pipeline/)
 - Giao diện web (spec, plan, API, quickstart): [`specs/002-web-ui/`](specs/002-web-ui/)
+- Đăng video lên TikTok/YouTube (spec, plan, API, quickstart): [`specs/006-publish-video-tab/`](specs/006-publish-video-tab/)
 - Sửa lỗi lồng tiếng + phụ đề tự động/động (spec, plan, research, quickstart): [`specs/003-dubbing-fixes-subtitles/`](specs/003-dubbing-fixes-subtitles/)
 - Chọn giọng đọc + nghe thử, provider Vivibe (spec, plan, research, quickstart): [`specs/004-voice-selection-preview/`](specs/004-voice-selection-preview/)
 - Lồng tiếng khớp nhịp tự nhiên theo từng câu (spec, plan, research, quickstart): [`specs/005-natural-pause-dubbing/`](specs/005-natural-pause-dubbing/)

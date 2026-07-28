@@ -48,3 +48,6 @@ node_modules/
 web/frontend/dist/
 web/frontend/.vite/
 npm-debug.log*
+
+# Publish state (runtime data — feature 006, không commit)
+publish_data/

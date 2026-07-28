@@ -26,6 +26,9 @@ export interface JobDetail extends JobSummary {
     tts_segments_failed?: boolean;
   };
   output_video_url: string | null;
+  // Video gốc đã tải về — để xem song song với kết quả và so sánh (null nếu
+  // file gốc không còn/job tạo trước khi có field này)
+  source_video_url: string | null;
   can_retry: boolean;
 }
 
@@ -123,8 +126,85 @@ export function outputUrl(jobId: string) {
   return `/api/jobs/${jobId}/output`;
 }
 
+export function sourceUrl(jobId: string) {
+  return `/api/jobs/${jobId}/source`;
+}
+
 export function listVoices() {
   return request<{ voices: Voice[] }>("/api/voices");
+}
+
+// ── Đăng video (006-publish-video-tab) ──────────────────────────────────────
+
+export interface PublishableVideo {
+  job_id: string;
+  source_url: string;
+  created_at: string;
+  duration_seconds: number;
+  already_published_to: string[];
+}
+
+export interface ChannelConnection {
+  account_id: string;
+  platform: string;
+  label: string;
+  status: "connected" | "expired" | "disconnected";
+}
+
+export interface PublishAttempt {
+  attempt_id: string;
+  job_id: string;
+  platform: string;
+  account_label: string;
+  title: string;
+  status: "pending" | "publishing" | "success" | "failed";
+  error: string | null;
+  error_kind: string | null;
+  post_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listPublishableVideos() {
+  return request<{ videos: PublishableVideo[] }>("/api/publish/videos");
+}
+
+export function listConnections() {
+  return request<{ connections: ChannelConnection[] }>("/api/publish/connections");
+}
+
+export function startConnect(platform: string, redirectUrl?: string) {
+  return request<{ authorize_url: string }>(`/api/publish/connections/${platform}`, {
+    method: "POST",
+    body: JSON.stringify({ redirect_url: redirectUrl ?? null }),
+  });
+}
+
+export function disconnectChannel(accountId: string) {
+  return request<{ ok: boolean; warning?: string }>(`/api/publish/connections/${accountId}`, {
+    method: "DELETE",
+  });
+}
+
+export function createPublish(
+  jobId: string,
+  platform: string,
+  accountId: string,
+  title: string,
+) {
+  return request<{ attempt_id: string; status: string }>("/api/publish", {
+    method: "POST",
+    body: JSON.stringify({ job_id: jobId, platform, account_id: accountId, title }),
+  });
+}
+
+export function listAttempts(jobId?: string) {
+  const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+  return request<{ attempts: PublishAttempt[] }>(`/api/publish/attempts${query}`);
+}
+
+export function getAttempt(attemptId: string) {
+  return request<PublishAttempt>(`/api/publish/attempts/${attemptId}`);
 }
 
 export async function previewVoice(provider: string, voiceId: string): Promise<Blob> {

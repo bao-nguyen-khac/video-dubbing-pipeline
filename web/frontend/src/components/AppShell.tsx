@@ -46,6 +46,9 @@ export default function AppShell({ children, narrow = false }: Props) {
             <NavLink to="/jobs" className="nav-link">
               Lịch sử
             </NavLink>
+            <NavLink to="/publish" className="nav-link">
+              Đăng video
+            </NavLink>
             <button
               type="button"
               className="btn btn--subtle"

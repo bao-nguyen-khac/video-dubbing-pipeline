@@ -7,16 +7,31 @@ Output: jobs/{job_id}/transcript.json
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 
 
 # Model size: 'tiny', 'base', 'small', 'medium', 'large-v3'
-# MVP dùng 'small' — cân bằng tốc độ và độ chính xác, không cần GPU
-_WHISPER_MODEL = "small"
+# Mặc định 'small' — cân bằng tốc độ và độ chính xác, không cần GPU.
+#
+# Whisper là model ĐA NGÔN NGỮ (~99 thứ tiếng) và bước transcribe() bên dưới
+# KHÔNG ghim ngôn ngữ nào, nên tiếng Trung/Nhật/Hàn/Thái... đều chạy được sẵn.
+# Tuy nhiên độ chính xác của 'small' với các thứ tiếng không phải tiếng Anh
+# thấp hơn rõ rệt — đổi sang 'medium'/'large-v3' qua WHISPER_MODEL trong .env
+# nếu cần chất lượng cao hơn (đổi lại chạy chậm hơn nhiều trên CPU).
+_WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
 _WHISPER_DEVICE = "cpu"
 _WHISPER_COMPUTE_TYPE = "int8"  # Tối ưu tốc độ trên CPU
+
+# Ngôn ngữ nguồn. Để TRỐNG = tự nhận diện (mặc định).
+#
+# Tự nhận diện chỉ nghe 30 GIÂY ĐẦU của audio, nên có thể đoán sai khi clip mở
+# đầu bằng nhạc/tiếng ồn, hoặc khi nói xen kẽ 2 thứ tiếng. Ghim mã ngôn ngữ
+# (vd "zh", "ja", "ko", "vi", "en") qua WHISPER_LANGUAGE trong .env để bỏ qua
+# bước đoán khi đã biết chắc clip nói tiếng gì.
+_WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "").strip() or None
 
 # VAD (lọc khoảng im lặng) mặc định của faster-whisper dùng
 # min_silence_duration_ms=2000 — chỉ coi là ngắt nghỉ khi im lặng ≥2 giây, nên
@@ -82,7 +97,7 @@ def transcribe(source_path: str | Path, job_dir: Path) -> Path:
         _extract_audio(source_path, tmp_audio_path)
 
         # Bước 2: Chạy Whisper ASR
-        segments, language = _run_whisper(tmp_audio_path)
+        segments, language, language_probability = _run_whisper(tmp_audio_path)
 
     finally:
         # Dọn file tạm dù có lỗi hay không
@@ -92,6 +107,10 @@ def transcribe(source_path: str | Path, job_dir: Path) -> Path:
     # Bước 3: Ghi transcript.json
     transcript_data = {
         "language": language,
+        # Độ tin cậy của bước đoán ngôn ngữ (1.0 khi đã ghim WHISPER_LANGUAGE).
+        # Ghi lại để khi bản dịch ra kết quả lạ, còn kiểm được nguyên nhân có
+        # phải do nhận diện sai ngôn ngữ hay không.
+        "language_probability": language_probability,
         "segments": segments,
         "full_text": " ".join(s["text"].strip() for s in segments),
     }
@@ -121,12 +140,12 @@ def _extract_audio(video_path: Path, audio_path: Path) -> None:
         )
 
 
-def _run_whisper(audio_path: Path) -> tuple[list[dict], str]:
+def _run_whisper(audio_path: Path) -> tuple[list[dict], str, float]:
     """
     Chạy faster-whisper trên file audio.
 
     Returns:
-        (segments, detected_language)
+        (segments, language, language_probability)
         segments: List[{"start": float, "end": float, "text": str}]
     """
     try:
@@ -145,6 +164,8 @@ def _run_whisper(audio_path: Path) -> tuple[list[dict], str]:
     raw_segments, info = model.transcribe(
         str(audio_path),
         beam_size=5,
+        # None = tự nhận diện (mặc định); đặt WHISPER_LANGUAGE để ghim
+        language=_WHISPER_LANGUAGE,
         vad_filter=True,  # Lọc khoảng im lặng tự động
         vad_parameters={"min_silence_duration_ms": _VAD_MIN_SILENCE_MS},
         word_timestamps=True,  # cải thiện độ chính xác mốc start/end của segment
@@ -156,7 +177,21 @@ def _run_whisper(audio_path: Path) -> tuple[list[dict], str]:
 
     # Edge case: video không có lời thoại → trả về transcript rỗng (không raise)
     language = getattr(info, "language", "unknown")
-    return segments, language
+    probability = float(getattr(info, "language_probability", 0.0) or 0.0)
+
+    if _WHISPER_LANGUAGE:
+        print(f"[transcriber] Ngôn ngữ nguồn: {language} (ghim qua WHISPER_LANGUAGE)")
+    else:
+        print(f"[transcriber] Ngôn ngữ nguồn tự nhận diện: {language} ({probability:.0%})")
+        # Đoán ngôn ngữ chỉ dựa trên 30s đầu — độ tin cậy thấp thường đi kèm
+        # transcript sai bét, cảnh báo để người dùng biết đường ghim lại
+        if probability and probability < 0.6:
+            print(
+                f"[transcriber] ⚠ Độ tin cậy nhận diện ngôn ngữ thấp ({probability:.0%}). "
+                f"Nếu transcript sai, đặt WHISPER_LANGUAGE trong .env (vd 'zh', 'ja', 'ko')."
+            )
+
+    return segments, language, probability
 
 
 def _split_by_word_gaps(seg) -> list[dict]:
