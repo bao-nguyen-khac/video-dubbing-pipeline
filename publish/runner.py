@@ -43,13 +43,21 @@ def _run_and_swallow(attempt: dict, video_path: str) -> None:
 
 def run_publish(attempt: dict, video_path: str) -> dict:
     """
-    pending → publishing → success/failed (data-model.md §1.1).
+    Điều phối theo `attempt["publish_mode"]` (007-schedule-publish).
+
+    - "now" (mặc định, 006): pending → publishing → success/failed, poll tới
+      khi có kết quả hoặc hết 10 phút.
+    - "scheduled": pending → scheduled, rồi DỪNG NGAY — Zernio giữ bài và tự
+      đăng khi tới giờ, hệ thống này không cần chạy vào lúc đó. Trạng thái thật
+      sau đó được cập nhật qua đối soát lười (publish/reconcile.py), KHÔNG bao
+      giờ qua poll ở đây.
 
     Tách khỏi thread để test gọi trực tiếp được (đồng bộ) với client đã mock.
     """
     job_id = attempt["job_id"]
     attempt_id = attempt["attempt_id"]
     platform = attempt["platform"]
+    scheduled_for = attempt.get("scheduled_for")
 
     try:
         media_url = zernio_client.upload_video(video_path)
@@ -65,11 +73,23 @@ def run_publish(attempt: dict, video_path: str) -> dict:
             media_url=media_url,
             request_id=attempt_id,
             tiktok_privacy_level=privacy_level,
+            scheduled_for=scheduled_for,
         )
     except ZernioError as e:
         return _fail(attempt, e.kind, e.message)
 
     post_id = post.get("_id") or post.get("id")
+
+    if attempt.get("publish_mode") == "scheduled":
+        # Zernio đã nhận bài — KHÔNG poll. Bài hẹn 3 ngày sau vẫn ở trạng thái
+        # "scheduled" suốt khoảng đó; nếu poll như nhánh "now" thì sau 10 phút
+        # sẽ bị _poll_until_done() đánh nhầm thành "failed" dù vẫn đang chờ
+        # đăng bình thường (bug đã phát hiện thật, xem research.md §3 — đây
+        # chính là lý do 2 nhánh phải tách hẳn, không dùng chung code).
+        return store.update_attempt(
+            job_id, attempt_id, status="scheduled", provider_post_id=post_id
+        )
+
     store.update_attempt(
         job_id, attempt_id, status="publishing", provider_post_id=post_id
     )

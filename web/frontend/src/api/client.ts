@@ -151,18 +151,29 @@ export interface ChannelConnection {
   status: "connected" | "expired" | "disconnected";
 }
 
+export type PublishMode = "now" | "scheduled";
+
 export interface PublishAttempt {
   attempt_id: string;
   job_id: string;
   platform: string;
   account_label: string;
   title: string;
-  status: "pending" | "publishing" | "success" | "failed";
+  status: "pending" | "publishing" | "scheduled" | "success" | "failed" | "cancelled";
+  publish_mode: PublishMode;
+  // Chuỗi ISO 8601 UTC, null khi publish_mode="now" (007-schedule-publish)
+  scheduled_for: string | null;
   error: string | null;
   error_kind: string | null;
   post_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CancelledAttemptSummary {
+  attempt_id: string;
+  title: string;
+  scheduled_for: string;
 }
 
 export function listPublishableVideos() {
@@ -181,7 +192,12 @@ export function startConnect(platform: string, redirectUrl?: string) {
 }
 
 export function disconnectChannel(accountId: string) {
-  return request<{ ok: boolean; warning?: string }>(`/api/publish/connections/${accountId}`, {
+  return request<{
+    ok: boolean;
+    warning?: string;
+    // 007-schedule-publish: bài đang chờ đăng của kênh này bị huỷ theo (FR-015)
+    cancelled_attempts?: CancelledAttemptSummary[];
+  }>(`/api/publish/connections/${accountId}`, {
     method: "DELETE",
   });
 }
@@ -191,20 +207,38 @@ export function createPublish(
   platform: string,
   accountId: string,
   title: string,
+  publishMode: PublishMode = "now",
+  scheduledFor?: string,
 ) {
   return request<{ attempt_id: string; status: string }>("/api/publish", {
     method: "POST",
-    body: JSON.stringify({ job_id: jobId, platform, account_id: accountId, title }),
+    body: JSON.stringify({
+      job_id: jobId,
+      platform,
+      account_id: accountId,
+      title,
+      publish_mode: publishMode,
+      ...(scheduledFor ? { scheduled_for: scheduledFor } : {}),
+    }),
   });
 }
 
-export function listAttempts(jobId?: string) {
-  const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+export function listAttempts(jobId?: string, status?: string) {
+  const params = new URLSearchParams();
+  if (jobId) params.set("job_id", jobId);
+  if (status) params.set("status", status);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return request<{ attempts: PublishAttempt[] }>(`/api/publish/attempts${query}`);
 }
 
 export function getAttempt(attemptId: string) {
   return request<PublishAttempt>(`/api/publish/attempts/${attemptId}`);
+}
+
+export function cancelAttempt(attemptId: string) {
+  return request<{ ok: boolean }>(`/api/publish/attempts/${attemptId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function previewVoice(provider: string, voiceId: string): Promise<Blob> {

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Link } from "react-router-dom";
 import {
   ApiError,
+  cancelAttempt,
   createPublish,
   disconnectChannel,
   getAttempt,
@@ -14,33 +15,53 @@ import {
   listConnections,
   listPublishableVideos,
   startConnect,
+  type CancelledAttemptSummary,
   type ChannelConnection,
   type PublishAttempt,
   type PublishableVideo,
+  type PublishMode,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
 import { IconInbox } from "../components/Icon";
-import { PLATFORM_LABELS, absoluteTime, relativeTime } from "../lib/labels";
+import {
+  PLATFORM_LABELS,
+  PUBLISH_ATTEMPT_STATUS_LABELS,
+  absoluteTime,
+  formatScheduledFor,
+  localDatetimeToUtcIso,
+  relativeTime,
+} from "../lib/labels";
 
 // Chặng 1 chỉ bàn giao TikTok (plan.md → Thứ tự bàn giao); YouTube Shorts thêm
 // ở Phase 4 — thêm 1 dòng vào mảng này là đủ ở phía UI.
 const PLATFORMS = [{ value: "tiktok", label: "TikTok" }];
 
 const ATTEMPT_POLL_MS = 2000;
+// "scheduled" KHÔNG nằm trong active — bài đã hẹn giờ không cần poll liên tục,
+// nó sẽ chuyển success/failed qua đối soát lười khi mở lại giao diện
+// (007-schedule-publish, research.md §4)
 const ACTIVE_STATUSES = new Set(["pending", "publishing"]);
 
-const ATTEMPT_STATUS_LABELS: Record<string, string> = {
-  pending: "Đang chuẩn bị",
-  publishing: "Đang đăng",
-  success: "Thành công",
-  failed: "Thất bại",
-};
+// Chỉ để hiển thị gợi ý ngay trên form — backend luôn là nguồn sự thật
+// (publish/limits.py::check_schedule_time)
+const MIN_SCHEDULE_LEAD_MINUTES = 15;
+const MAX_SCHEDULE_LEAD_DAYS = 3;
 
 function attemptBadgeKind(status: string): string {
   if (status === "success") return "done";
   if (status === "failed") return "failed";
+  if (status === "cancelled") return "idle";
   return "running";
+}
+
+function defaultScheduleValue(): string {
+  const in20Min = new Date(Date.now() + 20 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${in20Min.getFullYear()}-${pad(in20Min.getMonth() + 1)}-${pad(in20Min.getDate())}` +
+    `T${pad(in20Min.getHours())}:${pad(in20Min.getMinutes())}`
+  );
 }
 
 export default function PublishPage() {
@@ -52,6 +73,8 @@ export default function PublishPage() {
   const [jobId, setJobId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [title, setTitle] = useState("");
+  const [publishMode, setPublishMode] = useState<PublishMode>("now");
+  const [scheduleValue, setScheduleValue] = useState(defaultScheduleValue());
 
   const [configError, setConfigError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -59,6 +82,8 @@ export default function PublishPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [current, setCurrent] = useState<PublishAttempt | null>(null);
+  const [scheduledAttempts, setScheduledAttempts] = useState<PublishAttempt[]>([]);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const pollRef = useRef<number | null>(null);
 
@@ -89,13 +114,23 @@ export default function PublishPage() {
     }
   }, []);
 
+  const refreshScheduled = useCallback(async () => {
+    try {
+      const res = await listAttempts(undefined, "scheduled");
+      setScheduledAttempts(res.attempts);
+    } catch {
+      // Danh sách chờ lỗi không nên chặn thao tác đăng
+    }
+  }, []);
+
   useEffect(() => {
     listPublishableVideos()
       .then((res) => setVideos(res.videos))
       .catch(() => setVideos([]));
     refreshConnections();
     refreshAttempts();
-  }, [refreshConnections, refreshAttempts]);
+    refreshScheduled();
+  }, [refreshConnections, refreshAttempts, refreshScheduled]);
 
   // Người dùng cấp quyền ở tab khác rồi quay lại — làm mới danh sách kênh
   useEffect(() => {
@@ -161,6 +196,20 @@ export default function PublishPage() {
     try {
       const res = await disconnectChannel(connection.account_id);
       if (res.warning) setConnectionError(res.warning);
+
+      const cancelled: CancelledAttemptSummary[] = res.cancelled_attempts ?? [];
+      if (cancelled.length > 0) {
+        // FR-015: người dùng PHẢI biết những bài nào vừa bị huỷ theo
+        const list = cancelled
+          .map((a) => `"${a.title}" (${formatScheduledFor(a.scheduled_for)})`)
+          .join(", ");
+        setNotice(
+          `Đã huỷ ${cancelled.length} bài đang chờ đăng lên kênh này: ${list}.`,
+        );
+        refreshScheduled();
+        refreshAttempts();
+      }
+
       if (accountId === connection.account_id) setAccountId("");
       await refreshConnections();
     } catch (err) {
@@ -188,12 +237,49 @@ export default function PublishPage() {
       return;
     }
 
+    let scheduledForUtc: string | undefined;
+    if (publishMode === "scheduled") {
+      if (!scheduleValue) {
+        setFormError("Hãy chọn thời điểm hẹn giờ");
+        return;
+      }
+      const leadMinutes = (new Date(scheduleValue).getTime() - Date.now()) / 60000;
+      // Gợi ý tức thời cho người dùng — backend (check_schedule_time) vẫn là
+      // nguồn sự thật, kể cả khi đồng hồ máy người dùng lệch (research.md §7)
+      if (leadMinutes < MIN_SCHEDULE_LEAD_MINUTES) {
+        setFormError(`Phải hẹn cách hiện tại ít nhất ${MIN_SCHEDULE_LEAD_MINUTES} phút`);
+        return;
+      }
+      if (leadMinutes > MAX_SCHEDULE_LEAD_DAYS * 24 * 60) {
+        setFormError(`Chỉ hẹn được tối đa ${MAX_SCHEDULE_LEAD_DAYS} ngày`);
+        return;
+      }
+      scheduledForUtc = localDatetimeToUtcIso(scheduleValue);
+    }
+
     setSubmitting(true);
     try {
-      const { attempt_id } = await createPublish(jobId, platform, accountId, title.trim());
+      const { attempt_id } = await createPublish(
+        jobId,
+        platform,
+        accountId,
+        title.trim(),
+        publishMode,
+        scheduledForUtc,
+      );
       const attempt = await getAttempt(attempt_id);
-      setCurrent(attempt);
-      startPolling(attempt_id);
+      if (publishMode === "scheduled") {
+        // Bài hẹn giờ không cần poll (Zernio tự lo phần chờ) — chỉ cần refetch
+        // danh sách đang chờ để hiện ngay trong khu vực bên dưới
+        setCurrent(null);
+        setNotice(
+          `Đã đặt lịch đăng lúc ${formatScheduledFor(scheduledForUtc!)}. Bài sẽ tự lên đúng giờ, kể cả khi bạn tắt hệ thống.`,
+        );
+        refreshScheduled();
+      } else {
+        setCurrent(attempt);
+        startPolling(attempt_id);
+      }
       refreshAttempts();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -203,6 +289,18 @@ export default function PublishPage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCancel(attemptId: string) {
+    setCancellingId(attemptId);
+    try {
+      await cancelAttempt(attemptId);
+      await Promise.all([refreshScheduled(), refreshAttempts()]);
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "Huỷ lượt đăng thất bại");
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -373,6 +471,59 @@ export default function PublishPage() {
               />
             </div>
 
+            <div className="field">
+              <label className="field__label">Thời điểm đăng</label>
+              <div className="mode-grid">
+                <label className="mode-option">
+                  <input
+                    type="radio"
+                    name="publish-mode"
+                    value="now"
+                    checked={publishMode === "now"}
+                    onChange={() => setPublishMode("now")}
+                  />
+                  <span className="mode-option__body">
+                    <span className="mode-option__name">Đăng ngay</span>
+                    <span className="mode-option__desc">Lên công khai ngay khi bấm Đăng</span>
+                  </span>
+                </label>
+                <label className="mode-option">
+                  <input
+                    type="radio"
+                    name="publish-mode"
+                    value="scheduled"
+                    checked={publishMode === "scheduled"}
+                    onChange={() => setPublishMode("scheduled")}
+                  />
+                  <span className="mode-option__body">
+                    <span className="mode-option__name">Hẹn giờ</span>
+                    <span className="mode-option__desc">
+                      Tự đăng đúng giờ, kể cả khi tắt hệ thống này
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {publishMode === "scheduled" && (
+              <div className="field">
+                <label className="field__label" htmlFor="publish-schedule">
+                  Ngày giờ đăng (giờ Việt Nam)
+                </label>
+                <input
+                  id="publish-schedule"
+                  type="datetime-local"
+                  className="input"
+                  value={scheduleValue}
+                  onChange={(e) => setScheduleValue(e.target.value)}
+                />
+                <p className="field__hint">
+                  Phải cách hiện tại ít nhất {MIN_SCHEDULE_LEAD_MINUTES} phút, tối đa{" "}
+                  {MAX_SCHEDULE_LEAD_DAYS} ngày.
+                </p>
+              </div>
+            )}
+
             {formError && (
               <Callout tone="error" title="Chưa đăng được">
                 {formError}
@@ -384,11 +535,53 @@ export default function PublishPage() {
               className="btn btn--primary btn--block"
               disabled={submitting || publishing}
             >
-              {publishing ? "Đang đăng..." : submitting ? "Đang gửi..." : "Đăng"}
+              {publishing
+                ? "Đang đăng..."
+                : submitting
+                  ? "Đang gửi..."
+                  : publishMode === "scheduled"
+                    ? "Đặt lịch"
+                    : "Đăng"}
             </button>
           </form>
 
           {notice && <Callout tone="info">{notice}</Callout>}
+
+          {/* ── Đang chờ đăng (007-schedule-publish, FR-010/FR-011) ───── */}
+          <div className="card">
+            <div className="card__title">Đang chờ đăng</div>
+
+            {scheduledAttempts.length === 0 && (
+              <p className="field__hint">Chưa có bài nào đang chờ đăng.</p>
+            )}
+
+            {scheduledAttempts.map((attempt) => (
+              <div key={attempt.attempt_id} className="job-row">
+                <div className="job-row__url" title={attempt.title}>
+                  {attempt.title}
+                </div>
+                <div className="job-row__meta">
+                  <span>{PLATFORM_LABELS[attempt.platform] ?? attempt.platform}</span>
+                  <span>·</span>
+                  <span>{attempt.account_label}</span>
+                  <span>·</span>
+                  <span>
+                    Đăng lúc {attempt.scheduled_for ? formatScheduledFor(attempt.scheduled_for) : "?"}
+                  </span>
+                </div>
+                <div className="job-row__status">
+                  <button
+                    type="button"
+                    className="btn btn--subtle"
+                    onClick={() => handleCancel(attempt.attempt_id)}
+                    disabled={cancellingId === attempt.attempt_id}
+                  >
+                    {cancellingId === attempt.attempt_id ? "Đang huỷ..." : "Huỷ"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
 
           {/* ── Tiến trình lượt đăng hiện tại ─────────────────────────── */}
           {current && (
@@ -397,7 +590,7 @@ export default function PublishPage() {
               <p>
                 <span className={`badge badge--${attemptBadgeKind(current.status)}`}>
                   <span className="badge__dot" />
-                  {ATTEMPT_STATUS_LABELS[current.status] ?? current.status}
+                  {PUBLISH_ATTEMPT_STATUS_LABELS[current.status] ?? current.status}
                 </span>{" "}
                 {current.title}
               </p>
@@ -453,7 +646,7 @@ export default function PublishPage() {
                 <div className="job-row__status">
                   <span className={`badge badge--${attemptBadgeKind(attempt.status)}`}>
                     <span className="badge__dot" />
-                    {ATTEMPT_STATUS_LABELS[attempt.status] ?? attempt.status}
+                    {PUBLISH_ATTEMPT_STATUS_LABELS[attempt.status] ?? attempt.status}
                   </span>
                   {attempt.post_url && (
                     <a href={attempt.post_url} target="_blank" rel="noreferrer">

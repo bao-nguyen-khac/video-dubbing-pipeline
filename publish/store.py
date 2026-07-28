@@ -25,8 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = REPO_ROOT / "publish_data"
 STATE_PATH = STATE_DIR / "state.json"
 
-# Trạng thái chưa kết thúc — dùng để chặn đăng trùng (FR-009)
-ACTIVE_STATUSES = ("pending", "publishing")
+# Trạng thái chưa kết thúc — dùng để chặn đăng trùng (FR-009 của 006,
+# research.md §8 của 007: "scheduled" cũng tính là đang hoạt động — một video
+# đã có bài chờ đăng lên kênh nào thì không đặt thêm lịch cho đúng video + kênh
+# đó)
+ACTIVE_STATUSES = ("pending", "publishing", "scheduled")
 
 
 def _now() -> str:
@@ -62,8 +65,16 @@ def create_attempt(
     account_id: str,
     account_label: str,
     title: str,
+    publish_mode: str = "now",
+    scheduled_for: str | None = None,
 ) -> dict:
-    """Tạo file attempt ở trạng thái 'pending' (ghi TRƯỚC khi gọi Zernio)."""
+    """
+    Tạo file attempt ở trạng thái 'pending' (ghi TRƯỚC khi gọi Zernio).
+
+    `publish_mode`: "now" (mặc định, tương thích ngược với 006) hoặc
+    "scheduled". `scheduled_for` là chuỗi ISO 8601 UTC (data-model.md §1.1) —
+    chỉ có ý nghĩa khi `publish_mode="scheduled"`.
+    """
     attempt = {
         "attempt_id": str(uuid.uuid4()),
         "job_id": job_id,
@@ -71,6 +82,8 @@ def create_attempt(
         "account_id": account_id,
         "account_label": account_label,
         "title": title,
+        "publish_mode": publish_mode,
+        "scheduled_for": scheduled_for,
         "status": "pending",
         "error": None,
         "error_kind": None,
@@ -88,7 +101,12 @@ def read_attempt(job_id: str, attempt_id: str) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Không tìm thấy lượt đăng {attempt_id}")
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        attempt = json.load(f)
+    # File tạo trước feature 007 (006) không có 2 field này — mặc định "now"
+    # để chỗ gọi không phải if/else riêng cho attempt cũ (data-model.md §1.1)
+    attempt.setdefault("publish_mode", "now")
+    attempt.setdefault("scheduled_for", None)
+    return attempt
 
 
 def update_attempt(job_id: str, attempt_id: str, **fields) -> dict:
@@ -112,9 +130,12 @@ def iter_attempts(job_id: str | None = None):
         for attempt_file in sorted(pub_dir.glob("*.json")):
             try:
                 with open(attempt_file, encoding="utf-8") as f:
-                    yield json.load(f)
+                    attempt = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue
+            attempt.setdefault("publish_mode", "now")
+            attempt.setdefault("scheduled_for", None)
+            yield attempt
 
 
 def list_attempts(job_id: str | None = None) -> list[dict]:
@@ -142,6 +163,30 @@ def find_active_attempt(job_id: str, platform: str) -> dict | None:
         if attempt.get("platform") == platform and attempt.get("status") in ACTIVE_STATUSES:
             return attempt
     return None
+
+
+def cancel_attempt(job_id: str, attempt_id: str) -> dict:
+    """
+    Đánh dấu 1 lượt đăng đã hẹn giờ là 'cancelled'.
+
+    CHỈ gọi hàm này SAU KHI đã huỷ thành công ở Zernio (research.md §5) — store
+    không tự gọi Zernio, việc đảm bảo thứ tự đó là trách nhiệm của chỗ gọi
+    (web/backend/publish_api.py). Ghi 'cancelled' trước khi huỷ thật xong là
+    nói dối người dùng về một hành động không đảo ngược được.
+    """
+    return update_attempt(job_id, attempt_id, status="cancelled")
+
+
+def list_scheduled_by_account(account_id: str) -> list[dict]:
+    """
+    Mọi attempt đang 'scheduled' của 1 account — dùng khi ngắt kết nối kênh để
+    huỷ theo (FR-015, research.md §6).
+    """
+    return [
+        a
+        for a in iter_attempts()
+        if a.get("account_id") == account_id and a.get("status") == "scheduled"
+    ]
 
 
 def published_platforms(job_id: str) -> list[str]:

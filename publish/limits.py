@@ -7,6 +7,7 @@ lượt upload rồi mới bị nền tảng từ chối (spec.md → Edge Cases
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from media_utils import get_media_duration
@@ -22,6 +23,18 @@ YOUTUBE_SHORTS_MAX_DURATION_SECONDS = 180
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024
 
 _PLATFORM_LABEL = {"tiktok": "TikTok", "youtube": "YouTube Shorts"}
+
+# Biên thời gian cho hẹn giờ đăng (007-schedule-publish, spec.md → Clarifications).
+#
+# Tối thiểu 15 phút: video phải upload lên Zernio xong trước khi tới giờ đăng —
+# hẹn quá sát thì upload xong đã trôi qua mất thời điểm (research.md §7).
+MIN_SCHEDULE_LEAD_SECONDS = 15 * 60
+
+# Tối đa 3 ngày: tài liệu Zernio KHÔNG công bố file tạm (publicUrl từ presign)
+# được giữ bao lâu — đã tra cả openapi.yaml, docs.zernio.com lẫn llms.txt, không
+# nơi nào nói. Một endpoint upload anh em của họ ghi rõ tự xoá sau 7 ngày, nên
+# chọn mốc nằm sâu dưới mọi khả năng thay vì đoán (research.md §7).
+MAX_SCHEDULE_LEAD_SECONDS = 3 * 24 * 3600
 
 
 def max_duration_for(platform: str, override_seconds: int | None = None) -> int:
@@ -63,5 +76,34 @@ def check_limits(
     # tảng quyết định, tránh chặn nhầm video hợp lệ vì lỗi công cụ cục bộ
     if duration and duration > limit:
         return f"Video dài {duration:.0f}s, vượt giới hạn {limit}s của {label}"
+
+    return None
+
+
+def check_schedule_time(scheduled_for: datetime, now: datetime | None = None) -> str | None:
+    """
+    Trả về thông báo lỗi tiếng Việt nếu thời điểm hẹn giờ nằm ngoài biên cho
+    phép (FR-003, FR-004), None nếu hợp lệ.
+
+    `scheduled_for` PHẢI có tzinfo (đã quy đổi UTC — publish/timezones.py).
+    Naive datetime coi như UTC để tránh so sánh sai lệch múi giờ âm thầm.
+    """
+    if scheduled_for.tzinfo is None:
+        scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+
+    reference = now or datetime.now(timezone.utc)
+    lead_seconds = (scheduled_for - reference).total_seconds()
+
+    if lead_seconds < MIN_SCHEDULE_LEAD_SECONDS:
+        return (
+            f"Phải hẹn cách thời điểm hiện tại ít nhất "
+            f"{MIN_SCHEDULE_LEAD_SECONDS // 60} phút — video cần thời gian tải lên "
+            f"trước khi tới giờ đăng"
+        )
+
+    if lead_seconds > MAX_SCHEDULE_LEAD_SECONDS:
+        return (
+            f"Chỉ hẹn được tối đa {MAX_SCHEDULE_LEAD_SECONDS // 86400} ngày kể từ bây giờ"
+        )
 
     return None

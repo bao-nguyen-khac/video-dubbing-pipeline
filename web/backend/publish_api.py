@@ -8,13 +8,15 @@ còn lại của ứng dụng không bị ảnh hưởng.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from media_utils import get_media_duration
 from pipeline import read_job
-from publish import limits, runner, store, zernio_client
+from publish import limits, reconcile, runner, store, zernio_client
 from publish.zernio_client import ZernioError
 from web.backend.jobs_api import _get_output_video_path, _iter_all_jobs
 
@@ -54,6 +56,8 @@ def _attempt_to_public(attempt: dict) -> dict:
         "account_label": attempt.get("account_label", ""),
         "title": attempt.get("title", ""),
         "status": attempt["status"],
+        "publish_mode": attempt.get("publish_mode", "now"),
+        "scheduled_for": attempt.get("scheduled_for"),
         "error": attempt.get("error"),
         "error_kind": attempt.get("error_kind"),
         "post_url": attempt.get("post_url"),
@@ -160,22 +164,42 @@ async def disconnect_channel(account_id: str):
 
     Chặn cục bộ TRƯỚC (nguồn sự thật để chặn đăng), rồi mới gọi Zernio xoá liên
     kết thật. Zernio lỗi cũng không sao: kênh đã bị chặn ở phía này rồi.
+
+    007-schedule-publish (FR-015): mọi bài đang chờ đăng của kênh này PHẢI bị
+    huỷ theo — Zernio đăng bài mà không hỏi lại hệ thống này, nên chỉ chặn cục
+    bộ KHÔNG đủ để ngăn bài đã hẹn lên đúng kênh vừa ngắt (research.md §6).
     """
     if not zernio_client.is_configured():
         return _not_configured()
 
     store.block_account(account_id)
+
+    cancelled_attempts = []
+    warnings = []
+    for attempt in store.list_scheduled_by_account(account_id):
+        try:
+            zernio_client.delete_post(attempt["provider_post_id"])
+        except ZernioError as e:
+            warnings.append(f"Không huỷ được bài '{attempt['title']}': {e.message}")
+            continue
+        store.cancel_attempt(attempt["job_id"], attempt["attempt_id"])
+        cancelled_attempts.append(
+            {
+                "attempt_id": attempt["attempt_id"],
+                "title": attempt["title"],
+                "scheduled_for": attempt["scheduled_for"],
+            }
+        )
+
     try:
         zernio_client.delete_account(account_id)
     except ZernioError as e:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "ok": True,
-                "warning": f"Đã chặn đăng tới kênh này, nhưng gỡ liên kết ở Zernio thất bại: {e.message}",
-            },
-        )
-    return {"ok": True}
+        warnings.append(f"Gỡ liên kết ở Zernio thất bại: {e.message}")
+
+    response: dict = {"ok": True, "cancelled_attempts": cancelled_attempts}
+    if warnings:
+        response["warning"] = "; ".join(warnings)
+    return JSONResponse(status_code=200, content=response)
 
 
 # ── Publish ─────────────────────────────────────────────────────────────────
@@ -186,6 +210,11 @@ class CreatePublishRequest(BaseModel):
     platform: str
     account_id: str
     title: str
+    # 007-schedule-publish: "now" (mặc định, tương thích ngược với 006) hoặc
+    # "scheduled". scheduled_for là chuỗi ISO 8601 UTC (client tự quy đổi từ
+    # giờ Việt Nam trước khi gửi — xem web/frontend/src/lib/labels.ts)
+    publish_mode: str = "now"
+    scheduled_for: str | None = None
 
 
 @router.post("", status_code=202)
@@ -200,6 +229,22 @@ async def create_publish(body: CreatePublishRequest):
 
     if body.platform not in ENABLED_PLATFORMS:
         return _error(400, f"Nền tảng '{body.platform}' chưa được hỗ trợ ở phiên bản này")
+
+    if body.publish_mode not in ("now", "scheduled"):
+        return _error(400, "publish_mode phải là 'now' hoặc 'scheduled'")
+
+    scheduled_for_dt = None
+    if body.publish_mode == "scheduled":
+        if not body.scheduled_for:
+            return _error(400, "Thiếu thời điểm hẹn giờ")
+        try:
+            scheduled_for_dt = datetime.fromisoformat(body.scheduled_for.replace("Z", "+00:00"))
+        except ValueError:
+            return _error(400, "Thời điểm hẹn giờ không đúng định dạng")
+
+        schedule_error = limits.check_schedule_time(scheduled_for_dt)
+        if schedule_error:
+            return _error(400, schedule_error)
 
     try:
         job = read_job(body.job_id)
@@ -218,11 +263,12 @@ async def create_publish(body: CreatePublishRequest):
 
     active = store.find_active_attempt(body.job_id, body.platform)
     if active:
-        return _error(
-            409,
-            "Video này đang được đăng lên nền tảng đã chọn",
-            attempt_id=active["attempt_id"],
+        message = (
+            "Video này đã có bài đang chờ đăng lên nền tảng đã chọn"
+            if active.get("status") == "scheduled"
+            else "Video này đang được đăng lên nền tảng đã chọn"
         )
+        return _error(409, message, attempt_id=active["attempt_id"])
 
     # Giới hạn nền tảng: chặn TRƯỚC khi upload để không tốn 1 lượt tải lên
     max_duration = None
@@ -256,6 +302,8 @@ async def create_publish(body: CreatePublishRequest):
         account_id=body.account_id,
         account_label=account_label,
         title=title,
+        publish_mode=body.publish_mode,
+        scheduled_for=body.scheduled_for,
     )
     runner.start_publish(attempt, str(video_path))
 
@@ -263,9 +311,24 @@ async def create_publish(body: CreatePublishRequest):
 
 
 @router.get("/attempts")
-async def list_publish_attempts(job_id: str | None = None):
-    """GET /api/publish/attempts — lịch sử lượt đăng, mới nhất trước (FR-010)."""
-    return {"attempts": [_attempt_to_public(a) for a in store.list_attempts(job_id)]}
+async def list_publish_attempts(job_id: str | None = None, status: str | None = None):
+    """
+    GET /api/publish/attempts — lịch sử lượt đăng (FR-010).
+
+    Mỗi attempt được đối soát lười (T009/T016) trước khi trả về (FR-009).
+    `?status=scheduled` cho giao diện lấy riêng danh sách đang chờ đăng, sắp
+    theo `scheduled_for` tăng dần (gần nhất trước) thay vì `created_at` giảm
+    dần như lịch sử chung (contracts/api.md).
+    """
+    attempts = [reconcile.reconcile_if_needed(a) for a in store.list_attempts(job_id)]
+
+    if status:
+        attempts = [a for a in attempts if a.get("status") == status]
+
+    if status == "scheduled":
+        attempts.sort(key=lambda a: a.get("scheduled_for") or "")
+
+    return {"attempts": [_attempt_to_public(a) for a in attempts]}
 
 
 @router.get("/attempts/{attempt_id}")
@@ -274,4 +337,46 @@ async def get_publish_attempt(attempt_id: str):
     attempt = store.find_attempt(attempt_id)
     if not attempt:
         return _error(404, "Lượt đăng không tồn tại")
+    attempt = reconcile.reconcile_if_needed(attempt)
     return _attempt_to_public(attempt)
+
+
+@router.delete("/attempts/{attempt_id}")
+async def cancel_publish_attempt(attempt_id: str):
+    """
+    DELETE /api/publish/attempts/{attempt_id} — huỷ 1 bài đang chờ đăng
+    (FR-011, FR-012).
+
+    Thứ tự BẮT BUỘC: gọi Zernio huỷ trước, ghi 'cancelled' vào file sau
+    (research.md §5) — ghi trước khi huỷ thật xong là nói dối người dùng về
+    một hành động không đảo ngược được.
+    """
+    if not zernio_client.is_configured():
+        return _not_configured()
+
+    attempt = store.find_attempt(attempt_id)
+    if not attempt:
+        return _error(404, "Lượt đăng không tồn tại")
+
+    attempt = reconcile.reconcile_if_needed(attempt)
+    status = attempt.get("status")
+
+    if status == "publishing":
+        return _error(409, "Bài đang được đăng, không huỷ được nữa")
+    if status != "scheduled":
+        return _error(
+            409, "Bài đã đăng rồi, không huỷ được từ đây — xoá trực tiếp trên nền tảng"
+        )
+
+    try:
+        zernio_client.delete_post(attempt["provider_post_id"])
+    except ZernioError as e:
+        if e.kind == "platform_rejected":
+            # Zernio xác nhận bài đã đăng rồi (400) — đây là kết quả rõ ràng,
+            # không phải sự cố dịch vụ trung gian, nên trả 409 như FR-012 thay
+            # vì 502 mặc định của _provider_error() (contracts/api.md)
+            return _error(409, e.message)
+        return _provider_error(e)
+
+    store.cancel_attempt(attempt["job_id"], attempt_id)
+    return {"ok": True}

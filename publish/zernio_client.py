@@ -285,20 +285,31 @@ def build_post_payload(
     title: str,
     media_url: str,
     tiktok_privacy_level: str = "PUBLIC_TO_EVERYONE",
+    scheduled_for: str | None = None,
 ) -> dict:
     """
-    Body POST /posts cho 1 video, đăng công khai ngay.
+    Body POST /posts cho 1 video, đăng công khai ngay hoặc hẹn giờ.
 
     Chế độ hiển thị công khai LUÔN đặt tường minh (research.md §3) — không để
     mặc định của provider quyết định, tránh "thành công giả" (video riêng tư mà
     người dùng tưởng đã công khai).
+
+    `scheduled_for` (007-schedule-publish): chuỗi ISO 8601 UTC. Có giá trị thì
+    gửi `scheduledFor` + `timezone` và KHÔNG gửi `publishNow` — Zernio giữ bài
+    và tự đăng khi tới giờ (research.md §1/§2 của 007). `scheduled_for` LUÔN
+    phải là mốc UTC tuyệt đối (`...Z`), không phụ thuộc cách Zernio diễn giải
+    `timezone`, để tránh lệch giờ nếu mặc định của họ thay đổi.
     """
     media_item = {"type": "video", "url": media_url, "mimeType": "video/mp4"}
     payload: dict = {
         "content": title,
         "mediaItems": [media_item],
-        "publishNow": True,
     }
+    if scheduled_for:
+        payload["scheduledFor"] = scheduled_for
+        payload["timezone"] = "Asia/Ho_Chi_Minh"
+    else:
+        payload["publishNow"] = True
 
     if platform == "tiktok":
         payload["platforms"] = [{"platform": "tiktok", "accountId": account_id}]
@@ -338,20 +349,65 @@ def create_post(
     media_url: str,
     request_id: str,
     tiktok_privacy_level: str = "PUBLIC_TO_EVERYONE",
+    scheduled_for: str | None = None,
 ) -> dict:
     """
-    Tạo bài đăng công khai ngay. `request_id` đi vào header x-request-id để một
-    lần retry mạng không sinh 2 bài (contracts/api.md → Idempotency).
+    Tạo bài đăng công khai ngay, hoặc hẹn giờ nếu truyền `scheduled_for`.
 
-    Trả về post dict (`_id`, `status`, `platforms[]`).
+    `request_id` đi vào header x-request-id để một lần retry mạng không sinh 2
+    bài (contracts/api.md → Idempotency).
+
+    Trả về post dict (`_id`, `status`, `platforms[]`). Khi hẹn giờ, `status`
+    ban đầu là `"scheduled"` — Zernio tự đăng khi tới giờ, không cần lời gọi
+    nào thêm từ hệ thống này (007-schedule-publish, research.md §1).
     """
-    payload = build_post_payload(platform, account_id, title, media_url, tiktok_privacy_level)
+    payload = build_post_payload(
+        platform, account_id, title, media_url, tiktok_privacy_level, scheduled_for
+    )
     body = _request("POST", "/posts", json=payload, headers={"x-request-id": request_id})
     # Retry cùng x-request-id trả 200 kèm existingPost thay vì post
     post = body.get("post") or body.get("existingPost")
     if not post:
         raise ZernioError("unknown", "Zernio không trả về thông tin bài đăng", body)
     return post
+
+
+def delete_post(post_id: str) -> None:
+    """
+    Huỷ 1 bài chưa đăng (draft/scheduled) — dùng để huỷ bài hẹn giờ trước giờ
+    (007-schedule-publish, FR-011).
+
+    Zernio: 400 nghĩa là bài đã đăng rồi, không xoá được nữa — ánh xạ thành
+    `platform_rejected` để chỗ gọi trả 409 cho người dùng (research.md §5,
+    contracts/api.md). 404 nghĩa là bài không còn tồn tại ở Zernio — coi như
+    đã huỷ, không raise (idempotent).
+    """
+    try:
+        with _client() as client:
+            response = client.delete(f"/posts/{post_id}")
+    except httpx.TimeoutException as e:
+        raise ZernioError(
+            "provider_unavailable",
+            "Gọi Zernio quá thời gian chờ — dịch vụ trung gian không phản hồi",
+            {"exception": str(e)},
+        ) from e
+    except httpx.HTTPError as e:
+        raise ZernioError(
+            "provider_unavailable",
+            f"Không kết nối được tới dịch vụ đăng bài Zernio: {e}",
+            {"exception": str(e)},
+        ) from e
+
+    if response.status_code == 404:
+        return
+    if response.status_code == 400:
+        raise ZernioError(
+            "platform_rejected",
+            "Bài đã đăng rồi, không huỷ được từ đây — xoá trực tiếp trên nền tảng",
+            {"status": 400},
+        )
+
+    _raise_for_response(response)
 
 
 def get_post(post_id: str) -> dict:

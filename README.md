@@ -252,6 +252,26 @@ Lưu ý:
 
 Chi tiết: [`specs/006-publish-video-tab/`](specs/006-publish-video-tab/).
 
+#### Hẹn giờ đăng (feature 007-schedule-publish)
+
+Ngoài "Đăng ngay", có thể chọn **"Hẹn giờ"** để đặt lịch đăng vào thời điểm cụ
+thể (giờ Việt Nam). Video được tải lên Zernio ngay lúc đặt lịch — **Zernio giữ
+bài và tự đăng đúng giờ, hệ thống này không cần chạy vào lúc đó** (kể cả khi đã
+tắt máy hoàn toàn).
+
+Ràng buộc:
+
+- Hẹn được từ **15 phút** đến tối đa **3 ngày** kể từ lúc đặt lịch.
+- Muốn xem/huỷ bài đang chờ: mục "Đang chờ đăng" trong tab Đăng video. Huỷ chỉ
+  có tác dụng **trước** giờ đăng — bài đã lên rồi thì không huỷ được nữa.
+- Ngắt kết nối một kênh sẽ **tự huỷ mọi bài đang chờ đăng lên kênh đó**, để
+  tránh video lên ngầm một kênh bạn tưởng đã ngắt.
+- Trạng thái (thành công/thất bại) chỉ được cập nhật khi bạn **mở lại giao
+  diện** sau giờ hẹn — không có thông báo đẩy khi bạn vắng mặt.
+- Không hỗ trợ đổi giờ của bài đã hẹn — huỷ rồi đặt lịch lại nếu cần.
+
+Chi tiết: [`specs/007-schedule-publish/`](specs/007-schedule-publish/).
+
 ## Kiểm tra môi trường
 
 ```bash
@@ -264,8 +284,8 @@ python env_check.py
 pytest tests/unit -q
 ```
 
-Test của tính năng đăng video luôn mock lớp HTTP — không lượt test nào gọi thật
-tới Zernio (tốn chi phí thật và tạo bài đăng công khai thật).
+Test của tính năng đăng video (kể cả hẹn giờ) luôn mock lớp HTTP — không lượt
+test nào gọi thật tới Zernio (tốn chi phí thật và tạo bài đăng công khai thật).
 
 ## Cấu trúc output
 
@@ -291,6 +311,7 @@ jobs/{job_id}/
 - Pipeline CLI (spec, plan, quickstart): [`specs/001-video-repurpose-pipeline/`](specs/001-video-repurpose-pipeline/)
 - Giao diện web (spec, plan, API, quickstart): [`specs/002-web-ui/`](specs/002-web-ui/)
 - Đăng video lên TikTok/YouTube (spec, plan, API, quickstart): [`specs/006-publish-video-tab/`](specs/006-publish-video-tab/)
+- Hẹn giờ đăng (spec, plan, API, quickstart): [`specs/007-schedule-publish/`](specs/007-schedule-publish/)
 - Sửa lỗi lồng tiếng + phụ đề tự động/động (spec, plan, research, quickstart): [`specs/003-dubbing-fixes-subtitles/`](specs/003-dubbing-fixes-subtitles/)
 - Chọn giọng đọc + nghe thử, provider Vivibe (spec, plan, research, quickstart): [`specs/004-voice-selection-preview/`](specs/004-voice-selection-preview/)
 - Lồng tiếng khớp nhịp tự nhiên theo từng câu (spec, plan, research, quickstart): [`specs/005-natural-pause-dubbing/`](specs/005-natural-pause-dubbing/)

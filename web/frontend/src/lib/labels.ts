@@ -149,3 +149,58 @@ export function shortUrl(url: string): string {
     return url;
   }
 }
+
+// ── Hẹn giờ đăng (007-schedule-publish) ─────────────────────────────────────
+//
+// Giờ Việt Nam KHÔNG có giờ mùa hè (luôn UTC+7 cố định), nên quy đổi bằng cộng
+// trừ 7 tiếng thẳng là đủ chính xác — không cần Intl timezone database. Phải
+// khớp tuyệt đối với publish/timezones.py phía backend (research.md §2): lệch
+// 1 trong 2 chỗ là bài lên sai giờ.
+
+const VN_UTC_OFFSET_HOURS = 7;
+
+/**
+ * Giá trị từ `<input type="datetime-local">` (vd "2026-07-29T20:00", không có
+ * múi giờ) → chuỗi ISO 8601 UTC để gửi API. Input được hiểu là giờ Việt Nam.
+ */
+export function localDatetimeToUtcIso(value: string): string {
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = (timePart || "00:00").split(":").map(Number);
+  const utcMs = Date.UTC(year, month - 1, day, hour - VN_UTC_OFFSET_HOURS, minute, 0);
+  return new Date(utcMs).toISOString();
+}
+
+/**
+ * Chuỗi ISO 8601 UTC (từ API) → giá trị dùng được cho
+ * `<input type="datetime-local">`, hiển thị theo giờ Việt Nam.
+ */
+export function utcIsoToLocalDatetime(utcIso: string): string {
+  const utcMs = new Date(utcIso).getTime();
+  const vn = new Date(utcMs + VN_UTC_OFFSET_HOURS * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${vn.getUTCFullYear()}-${pad(vn.getUTCMonth() + 1)}-${pad(vn.getUTCDate())}` +
+    `T${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`
+  );
+}
+
+/** Hiển thị giờ đăng dự kiến theo giờ Việt Nam, kiểu "29/07/2026 20:00". */
+export function formatScheduledFor(utcIso: string): string {
+  const utcMs = new Date(utcIso).getTime();
+  const vn = new Date(utcMs + VN_UTC_OFFSET_HOURS * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${pad(vn.getUTCDate())}/${pad(vn.getUTCMonth() + 1)}/${vn.getUTCFullYear()} ` +
+    `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}`
+  );
+}
+
+export const PUBLISH_ATTEMPT_STATUS_LABELS: Record<string, string> = {
+  pending: "Đang chuẩn bị",
+  publishing: "Đang đăng",
+  scheduled: "Đang chờ đăng",
+  success: "Thành công",
+  failed: "Thất bại",
+  cancelled: "Đã huỷ",
+};

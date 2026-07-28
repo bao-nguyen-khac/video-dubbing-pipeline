@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from media_utils import has_audio_stream
+
 
 # Model size: 'tiny', 'base', 'small', 'medium', 'large-v3'
 # Mặc định 'small' — cân bằng tốc độ và độ chính xác, không cần GPU.
@@ -88,6 +90,20 @@ def transcribe(source_path: str | Path, job_dir: Path) -> Path:
 
     if not source_path.exists():
         raise RuntimeError(f"File video nguồn không tồn tại: {source_path}")
+
+    # Kiểm tra sớm: video không có audio stream nào (vd bài đăng dạng ảnh/
+    # slideshow của TikTok, nhạc nền phát tách riêng khỏi track hình) sẽ khiến
+    # ffmpeg thất bại với thông điệp kỹ thuật khó hiểu ("Output file does not
+    # contain any stream") — báo rõ nguyên nhân ngay tại đây thay vì để lộ
+    # stderr của ffmpeg ra người dùng (root cause đã verify thật: source.mp4
+    # chỉ có 1 stream video HEVC, 0 audio stream).
+    if not has_audio_stream(source_path):
+        raise RuntimeError(
+            "Video gốc không có âm thanh (không tìm thấy audio stream nào). "
+            "Đây thường là bài đăng dạng ảnh/slideshow của TikTok — nhạc nền "
+            "phát tách riêng khỏi phần hình nên không tải kèm được. Thử một "
+            "video khác (video quay thường có tiếng)."
+        )
 
     # Bước 1: Tách audio thành WAV 16kHz mono (tối ưu cho Whisper)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
