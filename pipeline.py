@@ -284,11 +284,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tts-provider",
         dest="tts_provider",
         default="edge-tts",
-        choices=["edge-tts", "lucyai", "router-tts"],
+        choices=["edge-tts", "lucyai", "omnivoice"],
         help=(
             "Provider TTS: 'edge-tts' (mặc định, free), 'lucyai' (Vivibe, cần "
-            "VIVIBE_API_KEY trong .env), hoặc 'router-tts' (giọng Gemini qua "
-            "9router, tái dùng ROUTER_API_KEY có sẵn) — chỉ áp dụng với "
+            "VIVIBE_API_KEY trong .env), hoặc 'omnivoice' (voice cloning qua "
+            "OmniVoice service, cần OMNIVOICE_BASE_URL) — chỉ áp dụng với "
             "--script-mode translate/rewrite — 004-voice-selection-preview"
         ),
     )
@@ -298,9 +298,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Giọng đọc cụ thể (VD 'vi-VN-HoaiMyNeural' cho edge-tts, id giọng "
-            "trong tài khoản Vivibe cho lucyai, hoặc tên giọng Gemini VD "
-            "'Puck' cho router-tts); để trống → dùng giọng mặc định hiện có "
-            "— 004-voice-selection-preview"
+            "trong tài khoản Vivibe cho lucyai, hoặc voice_id đã nạp trong "
+            "OmniVoice service cho omnivoice); để trống → dùng giọng mặc định "
+            "hiện có — 004-voice-selection-preview"
         ),
     )
     parser.add_argument(
@@ -495,8 +495,8 @@ def run_pipeline(
         else:
             active_provider = job.get("tts_provider", "edge-tts")
             # Chỉ edge-tts có giọng mặc định sẵn (2 giọng cố định); lucyai/
-            # router-tts bắt buộc người dùng chọn giọng cụ thể (không có
-            # "giọng mặc định" hợp lý cho tài khoản/catalog riêng của họ)
+            # omnivoice bắt buộc người dùng chọn giọng cụ thể (không có
+            # "giọng mặc định" hợp lý cho tài khoản/voice-clone riêng của họ)
             active_voice_id = job.get("voice_id") or (
                 DEFAULT_VOICE if active_provider == "edge-tts" else None
             )

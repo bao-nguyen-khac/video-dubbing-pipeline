@@ -1,6 +1,7 @@
 # ── Downloader ──────────────────────────────────────────────────────────────
 f2>=0.0.1.7             # Douyin/TikTok watermark-free download (engine chính)
 yt-dlp>=2024.1.1        # YouTube + fallback cho các nguồn f2 không hỗ trợ
+yt-dlp-ejs>=0.8.0       # Script giải "n-challenge" của YouTube (cần JS runtime node/deno)
 
 # ── ASR / Speech-to-Text ────────────────────────────────────────────────────
 faster-whisper>=1.0.0   # Faster CPU/GPU inference for Whisper (ASR)

@@ -208,6 +208,9 @@ def _get_adapter(provider: str, voice_id: str | None) -> Callable[[str, Path], N
             )
         return lambda text, out: lucyai_synthesize_text(text, voice_id, out)
 
+    # router-tts (9router) tạm tắt theo yêu cầu người dùng (ít dùng). Giữ lại
+    # nhánh code để bật lại nhanh khi cần — chỉ cần thêm "router-tts" vào các
+    # danh sách provider hợp lệ ở jobs_api/voices_api.
     if provider == "router-tts":
         from tts.router_tts_client import synthesize_text as router_synthesize_text
 
@@ -218,9 +221,19 @@ def _get_adapter(provider: str, voice_id: str | None) -> Callable[[str, Path], N
             )
         return lambda text, out: router_synthesize_text(text, voice_id, out)
 
+    if provider == "omnivoice":
+        from tts.omnivoice_client import synthesize_text as omnivoice_synthesize_text
+
+        if not voice_id:
+            raise RuntimeError(
+                "Provider 'omnivoice' bắt buộc phải chọn giọng đã nạp (voice "
+                "cloning) — OmniVoice không có giọng mặc định."
+            )
+        return lambda text, out: omnivoice_synthesize_text(text, voice_id, out)
+
     raise ValueError(
         f"tts_provider không hợp lệ: {provider}. "
-        "Dùng 'edge-tts', 'lucyai' hoặc 'router-tts'."
+        "Dùng 'edge-tts', 'lucyai' hoặc 'omnivoice'."
     )
 
 
@@ -310,7 +323,7 @@ def synthesize_segments(
     Args:
         script_path: Đường dẫn `script.json` (phải có mảng `segments`).
         job_dir: Thư mục job (`jobs/{job_id}/`).
-        provider: 'edge-tts' | 'lucyai' | 'router-tts'.
+        provider: 'edge-tts' | 'lucyai' | 'omnivoice'.
         voice_id: Giọng cụ thể; None → giọng mặc định (chỉ edge-tts có).
         dynamic_captions: True → ghi thêm `captions.json` lấy mốc từ timeline
             thực tế, dùng được cho cả 3 provider (FR-011).

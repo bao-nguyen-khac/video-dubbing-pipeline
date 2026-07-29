@@ -61,24 +61,27 @@ async def list_voices():
         except RuntimeError as e:
             print(f"[voices_api] Lấy danh sách giọng Vivibe thất bại: {e}")
 
-    # router-tts tái dùng ROUTER_API_KEY đã có (không cần secret riêng). Trước
-    # T041 (005), list_voices() hardcode nên vẫn liệt kê đủ 30 giọng dù
-    # 9router chết — người dùng chọn xong job mới báo lỗi ở synthesizing, sau
-    # khi đã tốn download/ASR/script. Thêm health-check timeout ngắn: 9router
-    # không phản hồi → ẩn hẳn router-tts khỏi danh sách thay vì để job chết
-    # muộn (cùng cách lucyai đã "graceful degrade" ở khối phía trên).
-    if os.environ.get("ROUTER_API_KEY", ""):
-        from tts.router_tts_client import is_available as router_tts_is_available
-        from tts.router_tts_client import list_voices as router_tts_list_voices
+    # OmniVoice chạy như service riêng (local, có thể chưa khởi động). Health-
+    # check timeout ngắn: service không phản hồi → ẩn hẳn provider khỏi danh
+    # sách thay vì để job chết muộn ở bước synthesizing (cùng cơ chế "graceful
+    # degrade" như lucyai ở khối trên).
+    #
+    # router-tts (9router) tạm tắt theo yêu cầu người dùng — bật lại bằng cách
+    # thêm lại khối health-check tương tự dựa trên ROUTER_API_KEY.
+    from tts.omnivoice_client import is_available as omnivoice_is_available
+    from tts.omnivoice_client import list_voices as omnivoice_list_voices
 
-        if await asyncio.to_thread(router_tts_is_available):
-            router_voices = await asyncio.to_thread(router_tts_list_voices)
+    if await asyncio.to_thread(omnivoice_is_available):
+        try:
+            omnivoice_voices = await asyncio.to_thread(omnivoice_list_voices)
             voices += [
-                {"provider": "router-tts", "voice_id": v["voice_id"], "name": v["name"]}
-                for v in router_voices
+                {"provider": "omnivoice", "voice_id": v["voice_id"], "name": v["name"]}
+                for v in omnivoice_voices
             ]
-        else:
-            print("[voices_api] 9router không phản hồi, ẩn giọng router-tts khỏi danh sách")
+        except Exception as e:  # noqa: BLE001 — lỗi service không được làm hỏng cả endpoint
+            print(f"[voices_api] Lấy danh sách giọng OmniVoice thất bại: {e}")
+    else:
+        print("[voices_api] OmniVoice service không phản hồi, ẩn giọng omnivoice khỏi danh sách")
 
     return {"voices": voices}
 
@@ -95,8 +98,8 @@ async def preview_voice(body: PreviewRequest):
     trong jobs/, KHÔNG bị chặn bởi rule "đang có job chạy" (FR-008,
     contracts/api.md).
     """
-    if body.provider not in ("edge-tts", "lucyai", "router-tts"):
-        return _error(400, "provider phải là 'edge-tts', 'lucyai' hoặc 'router-tts'")
+    if body.provider not in ("edge-tts", "lucyai", "omnivoice"):
+        return _error(400, "provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
     if not body.voice_id:
         return _error(400, "Thiếu voice_id")
 
@@ -110,11 +113,11 @@ async def preview_voice(body: PreviewRequest):
                 await asyncio.to_thread(
                     lucyai_synthesize_raw, _PREVIEW_TEXT, body.voice_id, api_key, output_path
                 )
-            elif body.provider == "router-tts":
-                from tts.router_tts_client import synthesize_text as router_tts_synthesize_text
+            elif body.provider == "omnivoice":
+                from tts.omnivoice_client import synthesize_text as omnivoice_synthesize_text
 
                 await asyncio.to_thread(
-                    router_tts_synthesize_text, _PREVIEW_TEXT, body.voice_id, output_path
+                    omnivoice_synthesize_text, _PREVIEW_TEXT, body.voice_id, output_path
                 )
             else:
                 from tts.edge_tts_client import synthesize_text as edge_tts_synthesize_text

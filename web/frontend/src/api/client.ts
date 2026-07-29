@@ -33,7 +33,7 @@ export interface JobDetail extends JobSummary {
 }
 
 export interface Voice {
-  provider: "edge-tts" | "lucyai" | "router-tts";
+  provider: "edge-tts" | "lucyai" | "omnivoice";
   voice_id: string;
   name: string;
 }

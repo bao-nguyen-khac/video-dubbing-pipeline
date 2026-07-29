@@ -166,8 +166,8 @@ async def submit_job(body: SubmitJobRequest):
     if body.script_mode not in ("translate", "rewrite", "subtitle"):
         return _error(400, "script_mode phải là 'translate', 'rewrite' hoặc 'subtitle'")
 
-    if body.tts_provider not in ("edge-tts", "lucyai", "router-tts"):
-        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'router-tts'")
+    if body.tts_provider not in ("edge-tts", "lucyai", "omnivoice"):
+        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
 
     try:
         platform = detect_platform(body.url)

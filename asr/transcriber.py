@@ -228,6 +228,8 @@ def _split_by_word_gaps(seg) -> list[dict]:
     """
     words = getattr(seg, "words", None)
     if not words:
+        # Không có word-timestamp → không kèm 'words' (sentence_segmenter sẽ
+        # tự bỏ qua và giữ nguyên nhịp cắt cũ, không raise)
         return [{"start": round(seg.start, 3), "end": round(seg.end, 3), "text": seg.text}]
 
     result: list[dict] = []
@@ -244,8 +246,15 @@ def _split_by_word_gaps(seg) -> list[dict]:
 
 
 def _words_to_segment(words: list) -> dict:
+    # Giữ mốc thời gian TỪNG TỪ trong 'words' để script_gen cắt lại đúng ranh
+    # giới câu (sentence_segmenter) — faster-whisper 'small' hay bỏ dấu câu,
+    # nên không thể cắt theo câu nếu chỉ có mốc segment thô.
     return {
         "start": round(words[0].start, 3),
         "end": round(words[-1].end, 3),
         "text": "".join(w.word for w in words),
+        "words": [
+            {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}
+            for w in words
+        ],
     }

@@ -346,7 +346,10 @@ def generate_script(
     with open(transcript_path, encoding="utf-8") as f:
         transcript_data = json.load(f)
 
-    units = group_segments(transcript_data.get("segments", []))
+    from script_gen.sentence_segmenter import resegment_by_sentences
+
+    segments = resegment_by_sentences(transcript_data.get("segments", []), _chat_completion)
+    units = group_segments(segments)
 
     # Edge case: transcript rỗng (video không có lời thoại) — báo lỗi rõ ràng
     # ngay ở bước scripting thay vì "thành công giả" rồi để TTS fail mơ hồ sau
@@ -411,6 +414,10 @@ def generate_subtitle_script(transcript_path: str | Path, job_dir: Path) -> Path
         raise RuntimeError(
             "Transcript rỗng — video gốc không có lời thoại để tạo phụ đề."
         )
+
+    from script_gen.sentence_segmenter import resegment_by_sentences
+
+    segments = resegment_by_sentences(segments, _chat_completion)
 
     cues = translate_segments(segments)
 

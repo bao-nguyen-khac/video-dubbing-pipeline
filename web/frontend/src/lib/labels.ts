@@ -42,6 +42,8 @@ export const SCRIPT_MODE_LABELS: Record<string, string> = {
 export const PROVIDER_LABELS: Record<string, string> = {
   "edge-tts": "edge-tts",
   lucyai: "Vivibe",
+  omnivoice: "OmniVoice",
+  // "router-tts" (9router) tạm tắt — giữ nhãn để job cũ vẫn hiển thị đúng tên
   "router-tts": "9router",
 };
 
