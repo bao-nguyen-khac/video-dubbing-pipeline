@@ -15,6 +15,7 @@ import {
   listConnections,
   listPublishableVideos,
   startConnect,
+  syncAttempts,
   type CancelledAttemptSummary,
   type ChannelConnection,
   type PublishAttempt,
@@ -84,6 +85,8 @@ export default function PublishPage() {
   const [current, setCurrent] = useState<PublishAttempt | null>(null);
   const [scheduledAttempts, setScheduledAttempts] = useState<PublishAttempt[]>([]);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   const pollRef = useRef<number | null>(null);
 
@@ -122,6 +125,31 @@ export default function PublishPage() {
       // Danh sách chờ lỗi không nên chặn thao tác đăng
     }
   }, []);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    setSyncNotice(null);
+    try {
+      const res = await syncAttempts();
+      // Cập nhật ngay từ kết quả trả về, đồng thời làm mới danh sách chờ
+      setAttempts(res.attempts);
+      await refreshScheduled();
+      const parts: string[] = [];
+      if (res.updated) parts.push(`${res.updated} cập nhật`);
+      if (res.cancelled) parts.push(`${res.cancelled} bị huỷ bên Zernio`);
+      setSyncNotice(
+        parts.length
+          ? `Đã đồng bộ: ${parts.join(", ")} (soát ${res.checked} lượt).`
+          : `Đã đồng bộ, không có thay đổi (soát ${res.checked} lượt).`,
+      );
+    } catch (err) {
+      setSyncNotice(
+        err instanceof ApiError ? `Đồng bộ thất bại: ${err.message}` : "Đồng bộ thất bại",
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }, [refreshScheduled]);
 
   useEffect(() => {
     listPublishableVideos()
@@ -620,7 +648,25 @@ export default function PublishPage() {
 
           {/* ── Lịch sử ──────────────────────────────────────────────── */}
           <div className="card">
-            <div className="card__title">Lịch sử đăng</div>
+            <div
+              className="card__title"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+            >
+              <span>Lịch sử đăng</span>
+              <button
+                type="button"
+                className="btn btn--subtle"
+                onClick={handleSync}
+                disabled={syncing}
+                title="Đồng bộ trạng thái/lịch từ Zernio (bắt cả thay đổi chỉnh thẳng trên Zernio)"
+              >
+                {syncing ? "Đang đồng bộ…" : "Đồng bộ Zernio"}
+              </button>
+            </div>
+
+            {syncNotice && (
+              <p style={{ marginTop: 0, fontSize: "0.85em", opacity: 0.75 }}>{syncNotice}</p>
+            )}
 
             {attempts.length === 0 && (
               <div className="empty">

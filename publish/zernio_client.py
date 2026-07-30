@@ -105,6 +105,11 @@ def _raise_for_response(response: httpx.Response) -> None:
             body,
         )
 
+    if status == 404:
+        # Bài đã bị xoá bên Zernio — dùng cho đối soát/sync để biết cần huỷ
+        # bản ghi cục bộ (không phải sự cố dịch vụ).
+        raise ZernioError("not_found", "Bài đăng không còn trên Zernio (đã bị xoá)", body)
+
     if status == 409:
         details = body.get("details") or {}
         raise ZernioError(
@@ -416,6 +421,43 @@ def get_post(post_id: str) -> dict:
     if not isinstance(post, dict) or not post.get("status"):
         raise ZernioError("unknown", "Zernio trả về trạng thái bài đăng không hợp lệ", body)
     return post
+
+
+def list_posts(
+    source: str = "zernio",
+    status: str | None = None,
+    page: int = 1,
+    limit: int = 100,
+    account_id: str | None = None,
+) -> tuple[list[dict], dict]:
+    """
+    Liệt kê bài đăng bên Zernio (GET /posts, có phân trang).
+
+    `source="zernio"` = bài tạo qua Zernio (gồm cả bài app này tạo); "external"
+    = bài native sync từ nền tảng. Trả về (posts, pagination).
+    """
+    params: dict = {"source": source, "page": page, "limit": limit}
+    if status:
+        params["status"] = status
+    if account_id:
+        params["accountId"] = account_id
+    body = _request("GET", "/posts", params=params)
+    return body.get("posts", []) or [], body.get("pagination", {}) or {}
+
+
+def iter_all_posts(
+    source: str = "zernio", limit: int = 100, max_pages: int = 20
+) -> list[dict]:
+    """Duyệt hết các trang của list_posts (trần `max_pages` để tránh vòng lặp vô hạn)."""
+    posts: list[dict] = []
+    page = 1
+    while page <= max_pages:
+        batch, _pagination = list_posts(source=source, page=page, limit=limit)
+        posts.extend(batch)
+        if len(batch) < limit:
+            break  # trang cuối
+        page += 1
+    return posts
 
 
 def post_url_from(post: dict) -> str | None:

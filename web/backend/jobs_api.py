@@ -9,13 +9,21 @@ lý media (Constitution Principle I, research.md).
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from pipeline import JOBS_DIR, create_job, detect_platform, read_job, status_from_artifacts
+from pipeline import (
+    JOBS_DIR,
+    create_job,
+    detect_platform,
+    read_job,
+    status_from_artifacts,
+)
+from pipeline import _write_job as write_job
 from web.backend.job_runner import start_job
 
 router = APIRouter()
@@ -91,6 +99,9 @@ def _job_to_summary(job: dict) -> dict:
         "status": job["status"],
         "progress_percent": status_to_progress(job),
         "created_at": job["created_at"],
+        # Ghim job lên mục "Ưu tiên" ở danh sách lịch sử
+        "pinned": bool(job.get("pinned", False)),
+        "pinned_at": job.get("pinned_at"),
     }
 
 
@@ -154,17 +165,19 @@ def _job_to_detail(job: dict) -> dict:
 
 class SubmitJobRequest(BaseModel):
     url: str
-    script_mode: str  # "translate" | "rewrite" | "subtitle"
+    script_mode: str  # "translate" | "rewrite" | "subtitle" | "download"
     dynamic_captions: bool = False
     tts_provider: str = "edge-tts"
     voice_id: str | None = None
+    # Khoảng giữ nguyên audio gốc (nhạc/tiếng hát), vd "0:15-0:30, 1:05-end"
+    keep_original_ranges: str | None = None
 
 
 @router.post("", status_code=201)
 async def submit_job(body: SubmitJobRequest):
     """POST /api/jobs — submit job mới (FR-001, FR-002, FR-009, contracts/api.md)."""
-    if body.script_mode not in ("translate", "rewrite", "subtitle"):
-        return _error(400, "script_mode phải là 'translate', 'rewrite' hoặc 'subtitle'")
+    if body.script_mode not in ("translate", "rewrite", "subtitle", "download"):
+        return _error(400, "script_mode phải là 'translate', 'rewrite', 'subtitle' hoặc 'download'")
 
     if body.tts_provider not in ("edge-tts", "lucyai", "omnivoice"):
         return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
@@ -185,6 +198,7 @@ async def submit_job(body: SubmitJobRequest):
         dynamic_captions=body.dynamic_captions,
         tts_provider=body.tts_provider,
         voice_id=body.voice_id,
+        keep_original_ranges=body.keep_original_ranges,
     )
     start_job(
         body.url,
@@ -278,3 +292,68 @@ async def retry_job(job_id: str):
         voice_id=job.get("voice_id"),
     )
     return {"job_id": job_id}
+
+
+class PinRequest(BaseModel):
+    pinned: bool
+
+
+@router.put("/{job_id}/pin")
+async def pin_job(job_id: str, body: PinRequest):
+    """PUT /api/jobs/{job_id}/pin — ghim/bỏ ghim job (đưa lên mục Ưu tiên)."""
+    from datetime import datetime, timezone
+
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    job["pinned"] = body.pinned
+    job["pinned_at"] = datetime.now(timezone.utc).isoformat() if body.pinned else None
+    write_job(job_id, job)
+    return {"job_id": job_id, "pinned": body.pinned}
+
+
+@router.delete("/{job_id}")
+async def delete_job(job_id: str):
+    """
+    DELETE /api/jobs/{job_id} — xoá hẳn job và MỌI file trên server.
+
+    Xoá thư mục jobs/{job_id}/ (source, output, voice...), dọn kèm bản ghi
+    lượt đăng (publish_data/) và entry sổ tải đã trỏ tới file vừa xoá. Không
+    xoá job đang chạy.
+    """
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    # Chỉ chặn khi job đang THỰC SỰ xử lý (một bước giữa chừng) — job
+    # pending/done/failed đều xoá được.
+    if job.get("status") in ("downloading", "transcribing", "scripting", "synthesizing", "merging"):
+        return _error(409, "Job đang xử lý, không xoá được — chờ xong hoặc thử lại sau")
+
+    # Xoá thư mục job (nguồn sự thật chính)
+    job_dir = JOBS_DIR / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    # Dọn bản ghi lượt đăng của job (best-effort, không chặn nếu thiếu module)
+    try:
+        from publish import store as publish_store
+
+        pub_dir = publish_store.publishes_dir(job_id)
+        if pub_dir.exists():
+            shutil.rmtree(pub_dir, ignore_errors=True)
+    except Exception:  # noqa: BLE001 — dọn kèm lỗi không được chặn việc xoá job
+        pass
+
+    # Dọn sổ video đã tải: bỏ các entry trỏ tới file vừa xoá (self-heal)
+    try:
+        import download_registry
+
+        download_registry.prune_missing()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"ok": True, "job_id": job_id}

@@ -38,7 +38,8 @@ StatusLiteral = Literal[
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
     "pending": ["downloading"],
-    "downloading": ["transcribing", "failed"],
+    # "done" trực tiếp: script_mode="download" chỉ tải rồi dừng, bỏ mọi bước sau
+    "downloading": ["transcribing", "done", "failed"],
     "transcribing": ["scripting", "failed"],
     "scripting": ["synthesizing", "failed"],
     "synthesizing": ["merging", "failed"],
@@ -75,6 +76,7 @@ def create_job(
     dynamic_captions: bool = False,
     tts_provider: str = "edge-tts",
     voice_id: str | None = None,
+    keep_original_ranges: str | None = None,
 ) -> dict:
     """Tạo job mới và ghi job.json vào jobs/{job_id}/.
 
@@ -98,6 +100,9 @@ def create_job(
         "dynamic_captions": dynamic_captions,
         "tts_provider": tts_provider,
         "voice_id": voice_id,
+        # Khoảng thời gian giữ nguyên audio gốc (nhạc/tiếng hát), không lồng
+        # tiếng đè — vd "0:15-0:30, 1:05-end". None/"" = lồng tiếng toàn bộ.
+        "keep_original_ranges": keep_original_ranges,
         "status": "pending",
         "error": None,
         "artifacts": {
@@ -263,11 +268,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--script-mode",
         dest="script_mode",
         required=True,
-        choices=["translate", "rewrite", "subtitle"],
+        choices=["translate", "rewrite", "subtitle", "download"],
         help=(
             "Chế độ xử lý: 'translate' (dịch lồng tiếng), 'rewrite' (tự soạn "
-            "lồng tiếng), hoặc 'subtitle' (giữ nguyên âm thanh gốc, chỉ thêm "
-            "phụ đề — 003-dubbing-fixes-subtitles)"
+            "lồng tiếng), 'subtitle' (giữ nguyên âm thanh gốc, chỉ thêm phụ "
+            "đề), hoặc 'download' (chỉ tải video, không xử lý gì thêm)"
         ),
     )
     parser.add_argument(
@@ -405,19 +410,85 @@ def run_pipeline(
         print(f"[pipeline][{jid}] Bắt đầu downloading...")
         try:
             update_job_status(jid, "downloading")
-            # Chọn client phù hợp theo platform
-            if platform in ("tiktok", "douyin"):
-                source_path = download_video(url, job_dir, platform)
+            import download_registry
+
+            dest_path = job_dir / "source.mp4"
+            reuse = download_registry.lookup(url)
+            if reuse and not (dest_path.exists() and dest_path.stat().st_size > 0):
+                # Đã tải video này ở job trước → clone file, khỏi tải lại
+                import shutil
+
+                shutil.copy2(reuse["source_video"], dest_path)
+                source_path = dest_path
+                print(
+                    f"[pipeline][{jid}] Tái dùng video đã tải "
+                    f"(job {reuse.get('job_id')}), clone thay vì tải lại"
+                )
             else:
+                # Chọn client phù hợp theo platform
+                if platform in ("tiktok", "douyin"):
+                    source_path = download_video(url, job_dir, platform)
+                else:
+                    from downloader.ytdlp_client import download_video_ytdlp
+                    source_path = download_video_ytdlp(url, job_dir)
+
+            # Sửa mất tiếng (TikTok/Douyin) — áp dụng cho CẢ file clone lẫn file
+            # mới tải: f2/yt-dlp hay lấy bản HEVC (bytevc1) tải về VIDEO-ONLY dù
+            # "khai" có aac; chỉ bản h264 mới có tiếng thật. File không có audio
+            # → tải lại ép h264. Vẫn câm = video thật sự không tiếng (slideshow)
+            # → để nguyên cho transcriber báo đúng.
+            from media_utils import has_audio_stream
+
+            if platform in ("tiktok", "douyin") and not has_audio_stream(source_path):
+                print(
+                    f"[pipeline][{jid}] ⚠ Video không có tiếng (bản HEVC TikTok câm "
+                    f"hoặc clone từ file câm cũ), tải lại bằng yt-dlp bản h264..."
+                )
                 from downloader.ytdlp_client import download_video_ytdlp
-                source_path = download_video_ytdlp(url, job_dir)
+
+                Path(dest_path).unlink(missing_ok=True)
+                try:
+                    repaired = download_video_ytdlp(url, job_dir, prefer_audio=True)
+                    source_path = repaired
+                    if not has_audio_stream(source_path):
+                        print(f"[pipeline][{jid}] Bản h264 vẫn không có tiếng — video gốc không có âm thanh")
+                except Exception as refetch_err:
+                    print(f"[pipeline][{jid}] Tải lại bản h264 thất bại: {refetch_err}")
+                    # Giữ lại file gì đó để bước sau báo lỗi rõ ràng
+                    if not Path(dest_path).exists():
+                        source_path = (
+                            download_video(url, job_dir, platform)
+                            if platform in ("tiktok", "douyin")
+                            else download_video_ytdlp(url, job_dir)
+                        )
+
+            # Ghi vào sổ để job sau tái dùng (chỉ ghi file CÓ tiếng — tránh lan
+            # file câm cũ; giữ nguồn gốc nếu sổ đã có entry file tốt)
+            if has_audio_stream(source_path) or platform not in ("tiktok", "douyin"):
+                download_registry.register(url, platform, source_path, jid)
+
+            print(f"[pipeline][{jid}] Download xong: {source_path}")
+
+            # script_mode="download": chỉ tải, không xử lý gì thêm → xong luôn
+            if script_mode == "download":
+                update_job_status(
+                    jid,
+                    "done",
+                    artifacts_update={
+                        "source_video": str(source_path),
+                        "output_video": str(source_path),
+                    },
+                )
+                print(f"[pipeline][{jid}] Chế độ 'chỉ tải' — hoàn tất, không xử lý thêm")
+                sys.exit(0)
 
             update_job_status(
                 jid,
                 "transcribing",
                 artifacts_update={"source_video": str(source_path)},
             )
-            print(f"[pipeline][{jid}] Download xong: {source_path}")
+        except SystemExit:
+            raise
         except Exception as e:
             fail_job(jid, "downloading", e)
             print(f"[ERROR][{jid}] Download thất bại: {e}", file=sys.stderr)
@@ -596,6 +667,21 @@ def run_pipeline(
                     job_dir,
                     background_audio_path=background_path,
                 )
+
+                # Giữ nguyên audio gốc ở các khoảng nhạc/tiếng hát người dùng chỉ
+                # định — phủ audio gốc lên bản đã lồng tiếng trong các khoảng đó
+                keep_ranges_raw = job.get("keep_original_ranges")
+                if keep_ranges_raw:
+                    from merge.ffmpeg_merge import apply_keep_original_ranges, parse_time_ranges
+
+                    total_dur = get_media_duration(job["artifacts"]["source_video"])
+                    ranges = parse_time_ranges(keep_ranges_raw, total_dur)
+                    if ranges:
+                        print(f"[pipeline][{jid}] Giữ nguyên audio gốc ở các khoảng: {ranges}")
+                        apply_keep_original_ranges(
+                            output_path, job["artifacts"]["source_video"], ranges
+                        )
+
                 subtitles_burned = False
                 # T035 (005): đọc từ job.json khi resume, cùng lý do như ở
                 # bước synthesizing — job đã reload ở dòng 550 nên field mới

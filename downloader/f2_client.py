@@ -51,7 +51,8 @@ def download_video(url: str, job_dir: Path, platform: str) -> Path:
             # độc lập, không phụ thuộc cơ chế msToken của f2 (Constitution Principle II)
             print(f"[f2_client] f2 tải TikTok thất bại ({e}), thử fallback yt-dlp...")
             from downloader.ytdlp_client import download_video_ytdlp
-            return download_video_ytdlp(url, output_path.parent)
+            # prefer_audio: bản HEVC TikTok hay bị câm, ép h264 để có tiếng
+            return download_video_ytdlp(url, output_path.parent, prefer_audio=True)
     elif platform == "douyin":
         return _download_douyin(url, output_path)
     else:

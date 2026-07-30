@@ -4,6 +4,7 @@ import HomePage from "./pages/HomePage";
 import JobListPage from "./pages/JobListPage";
 import JobDetailPage from "./pages/JobDetailPage";
 import PublishPage from "./pages/PublishPage";
+import DownloadsPage from "./pages/DownloadsPage";
 import "./App.css";
 
 // BrowserRouter thuần client-side (không dùng RSC/framework/data mode) — nên
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/jobs" element={<JobListPage />} />
         <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+        <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/publish" element={<PublishPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

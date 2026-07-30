@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from web.backend import auth  # noqa: E402
+from web.backend.downloads_api import router as downloads_router  # noqa: E402
 from web.backend.jobs_api import router as jobs_router  # noqa: E402
 from web.backend.publish_api import router as publish_router  # noqa: E402
 from web.backend.voices_api import router as voices_router  # noqa: E402
@@ -80,6 +81,7 @@ async def logout():
 app.include_router(jobs_router, prefix="/api/jobs")
 app.include_router(voices_router, prefix="/api/voices")
 app.include_router(publish_router, prefix="/api/publish")
+app.include_router(downloads_router, prefix="/api/downloads")
 
 # Serve React build (nếu đã `npm run build`) làm static site tại "/"
 if FRONTEND_DIST.exists():

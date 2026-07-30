@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from media_utils import get_media_duration
 from pipeline import read_job
-from publish import limits, reconcile, runner, store, zernio_client
+from publish import limits, reconcile, runner, store, sync, zernio_client
 from publish.zernio_client import ZernioError
 from web.backend.jobs_api import _get_output_video_path, _iter_all_jobs
 
@@ -329,6 +329,29 @@ async def list_publish_attempts(job_id: str | None = None, status: str | None = 
         attempts.sort(key=lambda a: a.get("scheduled_for") or "")
 
     return {"attempts": [_attempt_to_public(a) for a in attempts]}
+
+
+@router.post("/sync")
+async def sync_publish_attempts(job_id: str | None = None):
+    """
+    POST /api/publish/sync — đồng bộ hàng loạt với Zernio (1 call list thay N).
+
+    Bắt cả thay đổi chỉnh thẳng trên Zernio: reschedule, đã đăng/thất bại, đã
+    xoá. Giảm tải so với đối soát lười từng bài mỗi lần mở lịch sử.
+    """
+    if not zernio_client.is_configured():
+        return _not_configured()
+    try:
+        result = sync.sync_attempts(job_id)
+    except ZernioError as e:
+        return _provider_error(e)
+
+    return {
+        "checked": result["checked"],
+        "updated": result["updated"],
+        "cancelled": result["cancelled"],
+        "attempts": [_attempt_to_public(a) for a in result["attempts"]],
+    }
 
 
 @router.get("/attempts/{attempt_id}")

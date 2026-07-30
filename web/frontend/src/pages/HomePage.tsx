@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   getJob,
@@ -27,9 +27,13 @@ function voiceKey(v: Voice) {
 }
 
 export default function HomePage() {
-  const [url, setUrl] = useState("");
+  const [searchParams] = useSearchParams();
+  // "Dùng lại" từ trang Video đã tải điền sẵn link qua ?url= (job mới sẽ clone
+  // file có sẵn thay vì tải lại).
+  const [url, setUrl] = useState(() => searchParams.get("url") ?? "");
   const [scriptMode, setScriptMode] = useState<ScriptMode>("translate");
   const [dynamicCaptions, setDynamicCaptions] = useState(false);
+  const [keepRanges, setKeepRanges] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoiceKey, setSelectedVoiceKey] = useState<string>("");
   const [job, setJob] = useState<JobDetail | null>(null);
@@ -85,12 +89,14 @@ export default function HomePage() {
     setSubmitting(true);
     try {
       const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
+      const dubbing = scriptMode === "translate" || scriptMode === "rewrite";
       const { job_id } = await submitJob(
         url,
         scriptMode,
-        scriptMode !== "subtitle" && dynamicCaptions,
-        scriptMode !== "subtitle" ? selectedVoice?.provider : undefined,
-        scriptMode !== "subtitle" ? selectedVoice?.voice_id : undefined,
+        dubbing && dynamicCaptions,
+        dubbing ? selectedVoice?.provider : undefined,
+        dubbing ? selectedVoice?.voice_id : undefined,
+        dubbing && keepRanges.trim() ? keepRanges.trim() : undefined,
       );
       const detail = await getJob(job_id);
       setJob(detail);
@@ -134,7 +140,7 @@ export default function HomePage() {
   }
 
   const isBusy = job !== null && !TERMINAL_STATUSES.has(job.status);
-  const isDubbing = scriptMode !== "subtitle";
+  const isDubbing = scriptMode === "translate" || scriptMode === "rewrite";
   const locked = isBusy || submitting;
 
   // Nhóm giọng theo provider để danh sách dài vẫn dễ chọn
@@ -261,6 +267,27 @@ export default function HomePage() {
                   </span>
                 </span>
               </label>
+            </div>
+          )}
+
+          {isDubbing && (
+            <div className="field">
+              <label className="field__label" htmlFor="keep-ranges">
+                Giữ nguyên audio gốc (tuỳ chọn)
+              </label>
+              <input
+                id="keep-ranges"
+                type="text"
+                className="input"
+                placeholder="vd: 0:15-0:30, 1:05-end"
+                value={keepRanges}
+                onChange={(e) => setKeepRanges(e.target.value)}
+                disabled={locked}
+              />
+              <span className="field__hint">
+                Khoảng thời gian giữ nguyên nhạc/tiếng hát gốc, KHÔNG lồng tiếng đè.
+                Nhiều khoảng ngăn bằng dấu phẩy; dùng "end" cho tới hết video.
+              </span>
             </div>
           )}
 

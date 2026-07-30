@@ -7,7 +7,7 @@ export const TERMINAL_STATUSES = new Set(["done", "failed"]);
 // 10s), tránh WebSocket không cần thiết (002 research.md)
 export const POLL_INTERVAL_MS = 3000;
 
-export type ScriptMode = "translate" | "rewrite" | "subtitle";
+export type ScriptMode = "translate" | "rewrite" | "subtitle" | "download";
 
 export const SCRIPT_MODES: {
   value: ScriptMode;
@@ -29,12 +29,18 @@ export const SCRIPT_MODES: {
     name: "Phụ đề tự động",
     desc: "Giữ nguyên âm thanh gốc, chỉ thêm phụ đề",
   },
+  {
+    value: "download",
+    name: "Chỉ tải video",
+    desc: "Tải video gốc về, không xử lý gì thêm",
+  },
 ];
 
 export const SCRIPT_MODE_LABELS: Record<string, string> = {
   translate: "Dịch chuẩn (lồng tiếng)",
   rewrite: "Sáng tạo (lồng tiếng)",
   subtitle: "Phụ đề tự động (giữ âm thanh gốc)",
+  download: "Chỉ tải video (không xử lý)",
 };
 
 // "lucyai" hiển thị là "Vivibe" — tên người dùng biết tới, khác định danh nội
@@ -106,8 +112,14 @@ export function stageStates(
     STAGES.findIndex((s) => s.pct >= progressPercent),
   );
 
+  // "download" chỉ tải rồi xong — mọi bước xử lý sau tải đều gạch ngang.
+  const downloadOnlySkipped = new Set([
+    "transcribing", "scripting", "synthesizing", "merging",
+  ]);
+
   return STAGES.map((stage, i) => {
     if (scriptMode === "subtitle" && stage.key === "synthesizing") return "skipped";
+    if (scriptMode === "download" && downloadOnlySkipped.has(stage.key)) return "skipped";
     if (i < currentIndex) return "done";
     if (i > currentIndex) return "pending";
     if (kind === "failed") return "failed";

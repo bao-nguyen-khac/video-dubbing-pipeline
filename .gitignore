@@ -19,6 +19,9 @@ env/
 jobs/*
 !jobs/.gitignore
 
+# Sổ video đã tải (state cục bộ — trỏ tới file trong jobs/)
+download_registry.json
+
 # Model cache (faster-whisper)
 ~/.cache/huggingface/
 *.bin

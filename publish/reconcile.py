@@ -53,10 +53,7 @@ def reconcile_attempt(attempt: dict) -> dict:
     quả (khác hẳn nhánh "now" của runner, nơi timeout mới coi là thất bại thật
     sự vì đã có giới hạn 10 phút để chờ).
     """
-    job_id = attempt["job_id"]
-    attempt_id = attempt["attempt_id"]
     post_id = attempt.get("provider_post_id")
-
     if not post_id:
         return attempt
 
@@ -65,6 +62,20 @@ def reconcile_attempt(attempt: dict) -> dict:
     except ZernioError:
         return attempt
 
+    return apply_post_to_attempt(attempt, post)
+
+
+def apply_post_to_attempt(attempt: dict, post: dict) -> dict:
+    """
+    Cập nhật attempt cục bộ theo trạng thái THẬT của 1 bài Zernio đã lấy sẵn.
+
+    Tách riêng khỏi `reconcile_attempt` để dùng chung cho cả đối soát lười (gọi
+    `get_post` từng bài) LẪN sync hàng loạt (lấy 1 lần qua `list_posts` rồi map
+    theo id) — cùng logic ánh xạ, không lặp code. Chỉ ghi file khi có thay đổi
+    thật (tránh cập nhật updated_at vô ích).
+    """
+    job_id = attempt["job_id"]
+    attempt_id = attempt["attempt_id"]
     status = post.get("status")
 
     if status == _SUCCESS_STATUS:
@@ -88,14 +99,23 @@ def reconcile_attempt(attempt: dict) -> dict:
             error_kind="platform_rejected",
         )
 
-    if status == "scheduled" and attempt.get("status") == "publishing":
-        # Zernio báo lùi lại "scheduled" — hiếm nhưng không phải lỗi của ta
-        return store.update_attempt(job_id, attempt_id, status="scheduled")
+    if status == "scheduled":
+        # Đồng bộ luôn giờ hẹn nếu bị sửa bên Zernio (reschedule) — đây là lý do
+        # chính người dùng cần sync về (chỉnh lịch trực tiếp trên Zernio).
+        remote_when = post.get("scheduledFor")
+        fields: dict = {}
+        if attempt.get("status") == "publishing":
+            fields["status"] = "scheduled"  # Zernio lùi lại, hiếm
+        if remote_when and remote_when != attempt.get("scheduled_for"):
+            fields["scheduled_for"] = remote_when
+        if fields:
+            return store.update_attempt(job_id, attempt_id, **fields)
+        return attempt
 
     if status == "publishing" and attempt.get("status") != "publishing":
         return store.update_attempt(job_id, attempt_id, status="publishing")
 
-    # scheduled/publishing không đổi — không ghi lại để tránh cập nhật updated_at vô ích
+    # Không đổi — không ghi lại
     return attempt
 
 

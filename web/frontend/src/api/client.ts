@@ -8,6 +8,8 @@ export interface JobSummary {
   status: string;
   progress_percent: number;
   created_at: string;
+  pinned: boolean;
+  pinned_at: string | null;
 }
 
 export interface JobDetail extends JobSummary {
@@ -93,10 +95,11 @@ export function logout() {
 
 export function submitJob(
   url: string,
-  scriptMode: "translate" | "rewrite" | "subtitle",
+  scriptMode: "translate" | "rewrite" | "subtitle" | "download",
   dynamicCaptions: boolean = false,
   ttsProvider?: string,
   voiceId?: string,
+  keepOriginalRanges?: string,
 ) {
   return request<{ job_id: string }>("/api/jobs", {
     method: "POST",
@@ -106,8 +109,22 @@ export function submitJob(
       dynamic_captions: dynamicCaptions,
       ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
       ...(voiceId ? { voice_id: voiceId } : {}),
+      ...(keepOriginalRanges ? { keep_original_ranges: keepOriginalRanges } : {}),
     }),
   });
+}
+
+export interface DownloadedVideo {
+  url: string;
+  platform: string;
+  source_video: string;
+  job_id: string;
+  created_at: string;
+  available: boolean;
+}
+
+export function listDownloads() {
+  return request<{ videos: DownloadedVideo[] }>("/api/downloads");
 }
 
 export function getJob(jobId: string) {
@@ -116,6 +133,17 @@ export function getJob(jobId: string) {
 
 export function listJobs() {
   return request<{ jobs: JobSummary[] }>("/api/jobs");
+}
+
+export function pinJob(jobId: string, pinned: boolean) {
+  return request<{ job_id: string; pinned: boolean }>(`/api/jobs/${jobId}/pin`, {
+    method: "PUT",
+    body: JSON.stringify({ pinned }),
+  });
+}
+
+export function deleteJob(jobId: string) {
+  return request<{ ok: boolean }>(`/api/jobs/${jobId}`, { method: "DELETE" });
 }
 
 export function retryJob(jobId: string) {
@@ -233,6 +261,19 @@ export function listAttempts(jobId?: string, status?: string) {
 
 export function getAttempt(attemptId: string) {
   return request<PublishAttempt>(`/api/publish/attempts/${attemptId}`);
+}
+
+export interface SyncResult {
+  checked: number;
+  updated: number;
+  cancelled: number;
+  attempts: PublishAttempt[];
+}
+
+// Đồng bộ hàng loạt với Zernio (1 call list thay N call get) — bắt cả thay đổi
+// chỉnh thẳng trên Zernio: reschedule, đã đăng/thất bại, đã xoá.
+export function syncAttempts() {
+  return request<SyncResult>("/api/publish/sync", { method: "POST" });
 }
 
 export function cancelAttempt(attemptId: string) {

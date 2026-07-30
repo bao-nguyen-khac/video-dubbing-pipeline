@@ -90,13 +90,17 @@ def _is_bot_check_error(message: str) -> bool:
     )
 
 
-def download_video_ytdlp(url: str, job_dir: Path) -> Path:
+def download_video_ytdlp(url: str, job_dir: Path, prefer_audio: bool = False) -> Path:
     """
     Tải video qua yt-dlp. Dùng cho YouTube và làm fallback.
 
     Args:
         url: URL công khai của video.
         job_dir: Thư mục job (jobs/{job_id}/).
+        prefer_audio: True → ép chọn bản có TIẾNG (h264/avc) thay vì bản chất
+            lượng cao nhất. Cần cho TikTok: các bản HEVC/bytevc1 của TikTok
+            "khai" có aac nhưng tải về lại video-only (câm) — chỉ bản h264 mới
+            có track tiếng thật. Đánh đổi độ phân giải để lấy được tiếng.
 
     Returns:
         Path tới file source.mp4 đã tải.
@@ -119,10 +123,20 @@ def download_video_ytdlp(url: str, job_dir: Path) -> Path:
     if output_path.exists() and output_path.stat().st_size > 0:
         return output_path
 
+    if prefer_audio:
+        # Ưu tiên bản h264/avc (có tiếng thật), rồi mới tới bất kỳ bản nào còn
+        # audio; chỉ khi không còn lựa chọn mới lấy "best" (có thể câm).
+        video_format = (
+            "best[vcodec^=h264][acodec!=none]/best[vcodec*=avc][acodec!=none]/"
+            "bestvideo[vcodec^=h264]+bestaudio/best[acodec!=none]/best"
+        )
+    else:
+        video_format = "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
     def _run(use_cookies: bool) -> None:
         ydl_opts = {
             # Chọn format tốt nhất: video MP4 + audio, tối đa 1080p
-            "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": video_format,
             "outtmpl": str(output_path),
             "merge_output_format": "mp4",
             "quiet": False,
