@@ -142,6 +142,7 @@ def apply_hardsub_blur(
         "-c:v", "libx264",
         "-crf", "18",
         "-preset", "medium",
+        "-map_metadata", "-1",
         # Ép format MP4 tường minh — không dựa vào đuôi file để đoán, vì
         # output_path là file tạm "output_blurred.mp4.tmp" (đuôi thật là
         # ".tmp"), khiến ffmpeg lỗi "Invalid argument"/"Error initializing the
@@ -232,6 +233,7 @@ def burn_subtitles(
         "-preset", "medium",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-map_metadata", "-1",
         "-movflags", "+faststart",
         # Ép format MP4 tường minh — không dựa vào đuôi file để đoán, vì
         # output_path có thể là file tạm không có đuôi ".mp4" chuẩn (VD

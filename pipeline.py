@@ -628,7 +628,7 @@ def run_pipeline(
     from env_check import run_checks
     from hardsub.detector import extract_representative_frame
     from media_utils import get_media_duration, get_video_frame_size
-    from merge.ffmpeg_merge import merge_audio
+    from merge.ffmpeg_merge import apply_anti_detect, merge_audio
     from merge.subtitle_burner import apply_hardsub_blur, burn_subtitles, write_srt
     from merge.text_renderer import render_cue_overlays
     from merge.vocal_separator import extract_background_music
@@ -778,6 +778,17 @@ def run_pipeline(
                 )
                 print(f"[pipeline][{jid}] Chế độ 'chỉ tải' — hoàn tất, không xử lý thêm")
                 sys.exit(0)
+
+            # 010: Anti-Detect Mode (crop micro + color grading + xoá metadata)
+            # áp 1 LẦN DUY NHẤT ở đây — TRƯỚC transcribe/hardsub-detect — để
+            # mọi toạ độ pixel tính từ source_video về sau (khung hình cho
+            # user khoanh vùng hardsub, hardsub_regions.json, burn subtitle,
+            # merge) đều nhất quán với video thật sự sẽ xuất ra. Trước đây áp
+            # ở bước merge nên lệch toạ độ so với vùng hardsub đã khoanh trên
+            # video gốc chưa crop (xem merge/ffmpeg_merge.py::apply_anti_detect).
+            anti_detect_path = job_dir / "source_anti_detect.mp4"
+            apply_anti_detect(source_path, anti_detect_path)
+            source_path = anti_detect_path
 
             update_job_status(
                 jid,

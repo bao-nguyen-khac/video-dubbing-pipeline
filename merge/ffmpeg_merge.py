@@ -97,6 +97,7 @@ def apply_keep_original_ranges(
         "-map", "[a]",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
+        "-map_metadata", "-1",
         "-movflags", "+faststart",
         str(tmp_path),
     ]
@@ -177,6 +178,66 @@ def merge_audio(
     return output_path, duration_mismatch, background_music_kept
 
 
+def apply_anti_detect(source_path: str | Path, output_path: str | Path) -> Path:
+    """
+    Áp Anti-Detect Mode (010) MỘT LẦN DUY NHẤT lên video gốc — gọi ngay đầu
+    bước `transcribing` trong pipeline.py, TRƯỚC transcribe/hardsub-detect,
+    KHÔNG áp lại ở merge nữa. Lý do đặt ở đây thay vì lúc merge (cách cũ):
+    hardsub_regions.json / khung hình cho user khoanh vùng đều tính toạ độ
+    trên `source_video` — nếu crop/scale chỉ áp ở bước merge (sau khi toạ độ
+    đã chốt) thì toạ độ đó lệch so với video thật sự được burn/blur. Áp ở
+    đây khiến MỌI bước sau (transcribe, khoanh vùng hardsub, blur, burn
+    subtitle, merge) đều làm việc trên cùng một hệ quy chiếu pixel.
+
+    Chỉ xử lý VIDEO stream (crop micro 2.5% viền + scale về ĐÚNG độ phân giải
+    gốc bằng `scale=rw:rh` tham chiếu nhánh [orig] chưa crop, + color grading
+    nhẹ); audio giữ nguyên `-c:a copy` vì bước transcribe/ASR ngay sau đó cần
+    audio gốc y hệt. `trunc(.../2)*2` ép kích thước chẵn để tránh libx264 lỗi
+    "width/height not divisible by 2" (crop ra số lẻ, VD 1001*0.975, làm
+    ffmpeg crash — đã xác nhận thật).
+
+    No-op (không gọi ffmpeg) nếu output_path đã tồn tại và hợp lệ (resume).
+    """
+    source_path = Path(source_path)
+    output_path = Path(output_path)
+
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return output_path
+
+    filter_complex = (
+        "[0:v]split=2[orig][tocrop];"
+        "[tocrop]crop=trunc(iw*0.975/2)*2:trunc(ih*0.975/2)*2,"
+        "eq=brightness=0.01:contrast=1.02:saturation=1.04[graded];"
+        "[graded][orig]scale=trunc(rw/2)*2:trunc(rh/2)*2[v]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(source_path),
+        "-filter_complex", filter_complex,
+        "-map", "[v]",
+        "-map", "0:a?",                # Audio gốc giữ nguyên nếu có (video câm thì bỏ qua)
+        "-c:v", "libx264",
+        "-crf", "20",
+        "-preset", "medium",
+        "-c:a", "copy",
+        "-map_metadata", "-1",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg anti-detect thất bại (exit {result.returncode}):\n"
+            f"{result.stderr[-500:]}"
+        )
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("ffmpeg không tạo được video anti-detect hợp lệ")
+
+    return output_path
+
+
 def _run_ffmpeg_merge(
     video_path: Path,
     audio_path: Path,
@@ -192,18 +253,24 @@ def _run_ffmpeg_merge(
       dùng `-shortest` trực tiếp trên voice thì video bị cắt cụt mất đoạn cuối
       (bug thật: video 19.9s, lời 3.1s → output chỉ còn ~9.9s). apad đảm bảo
       output luôn bằng đúng độ dài video, phần thừa là im lặng.
+
+    Anti-Detect Mode (crop/scale/color-grade) KHÔNG áp ở đây nữa — đã chuyển
+    sang chạy 1 lần ở đầu bước transcribing, xem `apply_anti_detect()`.
+    `video_path` truyền vào đây coi như đã anti-detect sẵn.
     """
+    filter_complex = "[1:a]apad[a]"
     cmd = [
         "ffmpeg",
         "-y",                           # Ghi đè output nếu đã tồn tại
         "-i", str(video_path),          # Input 0: video gốc
         "-i", str(audio_path),          # Input 1: voice mới
-        "-filter_complex", "[1:a]apad[a]",  # Đệm im lặng cho voice
+        "-filter_complex", filter_complex,  # Đệm im lặng cho voice
         "-map", "0:v:0",               # Lấy video từ input 0
         "-map", "[a]",                 # Audio đã đệm
         "-c:v", "copy",                # Copy video không re-encode
         "-c:a", "aac",                 # Encode audio → AAC
         "-b:a", "128k",               # Bitrate audio 128kbps
+        "-map_metadata", "-1",         # Xóa sạch metadata gốc
         "-shortest",                    # Cắt theo video (audio đã đệm dài hơn)
         "-movflags", "+faststart",     # Tối ưu streaming (moov atom ở đầu)
         str(output_path),
@@ -243,22 +310,29 @@ def _run_ffmpeg_merge_with_background(
     - `apad` + `-shortest`: đệm cho đủ rồi cắt theo VIDEO, giữ trọn đoạn nhạc
       cuối. Trước đây `duration=first` + `-shortest` lấy độ dài theo voice nên
       cắt cụt phần cuối chỉ có nhạc (bug thật: 19.9s → 9.9s).
+
+    Anti-Detect Mode (crop/scale/color-grade) KHÔNG áp ở đây nữa — đã chuyển
+    sang chạy 1 lần ở đầu bước transcribing, xem `apply_anti_detect()`.
+    `video_path` truyền vào đây coi như đã anti-detect sẵn.
     """
+    filter_complex = (
+        "[1:a]volume=1.0[voice];[2:a]volume=0.5[bg];"
+        "[voice][bg]amix=inputs=2:duration=longest:dropout_transition=0[mix];"
+        "[mix]apad[a]"
+    )
     cmd = [
         "ffmpeg",
         "-y",
         "-i", str(video_path),          # Input 0: video gốc
         "-i", str(voice_path),          # Input 1: voice mới
         "-i", str(background_path),     # Input 2: nhạc nền tách được
-        "-filter_complex",
-        "[1:a]volume=1.0[voice];[2:a]volume=0.5[bg];"
-        "[voice][bg]amix=inputs=2:duration=longest:dropout_transition=0[mix];"
-        "[mix]apad[a]",
+        "-filter_complex", filter_complex,
         "-map", "0:v:0",
         "-map", "[a]",
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-map_metadata", "-1",
         "-shortest",
         "-movflags", "+faststart",
         str(output_path),
