@@ -449,6 +449,43 @@ def _openrouter_config() -> tuple[str, str, str] | None:
     return base_url, api_key, model
 
 
+# Tham số mà một model cụ thể từ chối — nhớ lại trong process để những lượt gọi
+# sau không tốn thêm một lượt hỏng nữa. Key: (base_url, model).
+#
+# Vì sao cần: một số model chỉ nhận đúng bộ tham số mặc định và trả 400
+# "Unsupported parameter: 'temperature' is not supported with this model"
+# (đã gặp thật với `github/gpt-5.4-mini` qua 9router). Trước đây lỗi đó làm hỏng
+# nguyên job dù chỉ cần bỏ 1 tham số tuỳ chọn đi là gọi được.
+_UNSUPPORTED_PARAMS: dict[tuple[str, str], set[str]] = {}
+
+# Các tham số CHỈ để tinh chỉnh — bỏ đi thì chất lượng có thể khác chút nhưng
+# vẫn ra kết quả dùng được. `model`/`messages` KHÔNG nằm ở đây: thiếu chúng thì
+# lượt gọi vô nghĩa, phải để lỗi nổi lên.
+_OPTIONAL_PARAMS = ("temperature", "max_tokens", "max_completion_tokens")
+
+
+def _rejected_param(error_message: str, sent_params) -> str | None:
+    """
+    Tìm tên tham số mà endpoint vừa báo là không hỗ trợ.
+
+    Bắt theo cả 2 cách diễn đạt hay gặp: "Unsupported parameter: 'x'" (OpenAI)
+    và "... 'x' is not supported ..." — chỉ nhận tham số ta THỰC SỰ đã gửi và
+    nằm trong danh sách bỏ được, để không nuốt nhầm một lỗi 400 khác.
+
+    KHÔNG khớp theo dấu nháy quanh tên tham số: lỗi thật đi qua nhiều lớp JSON
+    lồng nhau nên `str(exc)` có thể chứa `\\'temperature\\'` (nháy đã bị escape)
+    thay vì `'temperature'`. Khớp theo ranh giới từ mới đủ bền — điều kiện
+    "phải có chữ unsupported/not supported" đã lọc đúng loại lỗi từ trước.
+    """
+    lowered = error_message.lower()
+    if "unsupported" not in lowered and "not supported" not in lowered:
+        return None
+    for param in _OPTIONAL_PARAMS:
+        if param in sent_params and re.search(rf"(?<!\w){re.escape(param)}(?!\w)", lowered):
+            return param
+    return None
+
+
 def _call_chat_api(
     base_url: str,
     api_key: str,
@@ -460,6 +497,10 @@ def _call_chat_api(
     """
     Một lượt gọi chat completion tới endpoint OpenAI-compatible bất kỳ
     (9router hoặc OpenRouter — cùng giao thức nên dùng chung code).
+
+    Model nào từ chối tham số tuỳ chọn (`temperature`, `max_tokens`) sẽ được gọi
+    lại NGAY mà không có tham số đó, thay vì làm hỏng cả job — xem
+    `_UNSUPPORTED_PARAMS`.
 
     Raises:
         RuntimeError: Nếu gọi API thất bại hoặc trả về kết quả trống.
@@ -473,15 +514,39 @@ def _call_chat_api(
 
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=ROUTER_TIMEOUT)
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    known_bad = _UNSUPPORTED_PARAMS.setdefault((base_url, model), set())
+    kwargs = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=temperature,
-        max_tokens=ROUTER_MAX_TOKENS,
-    )
+    }
+    if "temperature" not in known_bad:
+        kwargs["temperature"] = temperature
+    if "max_tokens" not in known_bad:
+        kwargs["max_tokens"] = ROUTER_MAX_TOKENS
+
+    # Mỗi vòng bỏ đúng 1 tham số bị từ chối rồi thử lại; số vòng chặn trên bằng
+    # số tham số bỏ được nên không thể lặp vô hạn.
+    for _ in range(len(_OPTIONAL_PARAMS) + 1):
+        try:
+            response = client.chat.completions.create(**kwargs)
+            break
+        except Exception as e:
+            param = _rejected_param(str(e), kwargs)
+            if param is None:
+                raise
+            known_bad.add(param)
+            kwargs.pop(param, None)
+            print(
+                f"[router_client] Model '{model}' không nhận tham số "
+                f"'{param}' — gọi lại không kèm tham số này"
+            )
+    else:
+        raise RuntimeError(
+            f"Model '{model}' từ chối mọi tham số tuỳ chọn mà vẫn không gọi được."
+        )
 
     choice = response.choices[0]
     content = choice.message.content

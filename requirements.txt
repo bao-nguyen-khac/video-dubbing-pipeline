@@ -20,6 +20,14 @@ torchcodec                # Bắt buộc để torchaudio.save() hoạt động 
                           # thiếu package này khiến Demucs luôn fail ở bước lưu file (root cause đã
                           # verify thật, xem specs/003-dubbing-fixes-subtitles/research.md §1)
 
+# ── Phụ đề: vẽ chữ + làm mờ hardsub (feature 009-hardsub-blur-reposition) ───
+Pillow>=10.0.0          # (1) VẼ phụ đề thành ảnh PNG rồi overlay vào video
+                        # (merge/text_renderer.py) — thay cho bộ lọc `subtitles`/libass
+                        # của ffmpeg, vốn không có trên nhiều bản build phổ biến;
+                        # (2) đọc kích thước khung hình đại diện để người dùng tự
+                        # khoanh vùng phụ đề gốc cần mờ (hardsub/detector.py).
+                        # Cần thêm 1 font có dấu tiếng Việt trên hệ thống — xem README
+
 # ── Utilities ───────────────────────────────────────────────────────────────
 httpx>=0.27.0           # HTTP client (dùng trong f2/yt-dlp internally)
 python-dotenv>=1.0.0    # Load ROUTER_BASE_URL/ROUTER_API_KEY/ROUTER_MODEL từ .env

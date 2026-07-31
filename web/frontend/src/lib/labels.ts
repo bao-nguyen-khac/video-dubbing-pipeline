@@ -66,15 +66,30 @@ export const STATUS_LABELS: Record<string, string> = {
   scripting: "Đang viết kịch bản",
   synthesizing: "Đang tạo giọng đọc",
   merging: "Đang ghép video",
+  awaiting_review: "Chờ duyệt",
   done: "Hoàn tất",
   failed: "Thất bại",
 };
 
-export type StatusKind = "running" | "done" | "failed";
+// 008-supervised-pipeline: tên chốt hiển thị cho người dùng
+export const REVIEW_GATE_LABELS: Record<string, string> = {
+  transcript: "chốt lời thoại",
+  script: "chốt kịch bản",
+};
 
+export type StatusKind = "running" | "waiting" | "done" | "failed";
+
+/**
+ * Nhóm màu/ý nghĩa của trạng thái.
+ *
+ * "waiting" (008) là nhóm RIÊNG: job chờ duyệt không đang xử lý (nó đã nhả suất
+ * cho job khác) và cũng không lỗi — gộp vào "running" hay "failed" đều làm người
+ * dùng hiểu sai việc cần làm (FR-006).
+ */
 export function statusKind(status: string): StatusKind {
   if (status === "done") return "done";
   if (status === "failed") return "failed";
+  if (status === "awaiting_review") return "waiting";
   return "running";
 }
 
@@ -100,6 +115,10 @@ export type StageState = "done" | "active" | "failed" | "pending" | "skipped";
  *
  * `script_mode="subtitle"` không có bước tạo giọng đọc (giữ nguyên audio gốc)
  * nên bước đó hiện dạng gạch ngang thay vì giả vờ đã chạy.
+ *
+ * Job `awaiting_review` (008) có kind "waiting" — không phải "failed" nên bước
+ * kế tiếp hiện "active" (bước trước đã xong, bước này chờ phê duyệt để chạy),
+ * KHÔNG bị vẽ thành dấu lỗi.
  */
 export function stageStates(
   progressPercent: number,

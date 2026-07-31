@@ -11,10 +11,13 @@ export default function JobProgress({
   status,
   progressPercent,
   scriptMode,
+  reviewGate,
 }: {
   status: string;
   progressPercent: number;
   scriptMode?: string;
+  /** 008: chốt đang chờ duyệt — badge nói rõ chốt nào (FR-006) */
+  reviewGate?: string | null;
 }) {
   const kind = statusKind(status);
   const states = stageStates(progressPercent, status, scriptMode);
@@ -22,7 +25,7 @@ export default function JobProgress({
   return (
     <div className="progress">
       <div className="progress__head">
-        <StatusBadge status={status} />
+        <StatusBadge status={status} reviewGate={reviewGate} />
         <span className="progress__pct">{progressPercent}%</span>
       </div>
 

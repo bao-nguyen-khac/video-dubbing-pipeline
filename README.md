@@ -6,8 +6,12 @@ Pipeline Python CLI tự động hoá quá trình tái tạo video:
 ## Yêu cầu hệ thống
 
 - Python 3.11+
-- `ffmpeg` trong PATH (`brew install ffmpeg` trên macOS)
+- `ffmpeg` trong PATH (`brew install ffmpeg` trên macOS) — KHÔNG cần build kèm
+  `libass`: phụ đề được vẽ bằng Pillow rồi overlay, chỉ dùng các bộ lọc lõi
 - 9router (LLM proxy, OpenAI-compatible)
+- Một font có dấu tiếng Việt. macOS có sẵn (Arial Unicode); trên Linux cài
+  `apt-get install fonts-dejavu-core`. Muốn dùng font khác thì trỏ biến môi
+  trường `SUBTITLE_FONT_PATH` tới file `.ttf`.
 
 ## Cấu hình (.env)
 
@@ -92,6 +96,9 @@ python pipeline.py \
   [--dynamic-captions] \
   [--tts-provider <edge-tts|lucyai|router-tts>] \
   [--voice-id <voice_id>] \
+  [--supervised] \
+  [--hardsub-blur] \
+  [--hardsub-no-ranges <ranges>] \
   [--job-id <existing_job_id>]
 ```
 
@@ -102,10 +109,61 @@ python pipeline.py \
 | `--dynamic-captions` | ❌ | Chỉ áp dụng với `translate`/`rewrite`: thêm phụ đề động (chữ kịch bản chạy khớp nhịp giọng đọc, theo từng câu) lên video đã lồng tiếng — chính xác như nhau với cả 3 provider giọng đọc |
 | `--tts-provider` | ❌ | `edge-tts` (mặc định, free), `lucyai` (Vivibe, cần `VIVIBE_API_KEY`), hoặc `router-tts` (giọng Gemini qua 9router, tái dùng `ROUTER_API_KEY` có sẵn) — chỉ áp dụng với `translate`/`rewrite` |
 | `--voice-id` | ❌ | Giọng đọc cụ thể (VD `vi-VN-HoaiMyNeural` cho edge-tts, id giọng trong tài khoản Vivibe, hoặc tên giọng Gemini VD `Puck` cho router-tts); để trống → dùng giọng mặc định |
+| `--supervised` | ❌ | Bật chế độ quản lý pipeline: dừng chờ phê duyệt sau bước tách lời và sau bước sinh kịch bản (xem bên dưới). Bị bỏ qua với `download` |
+| `--hardsub-blur` | ❌ | Làm mờ phụ đề gốc có sẵn trên hình + chèn phụ đề mới đúng vị trí (xem bên dưới). Chỉ có tác dụng với chế độ có hiển thị phụ đề (`subtitle`, hoặc `translate`/`rewrite` kèm `--dynamic-captions`) |
+| `--hardsub-no-ranges` | ❌ | Khoảng thời gian KHÔNG có phụ đề gốc, cú pháp giống `--keep-original-ranges` (VD `"0:00-0:08, 0:15-end"`). Chỉ có ý nghĩa khi `--hardsub-blur` bật |
 | `--job-id` | ❌ | Resume job cũ; để trống → tạo job mới |
 
 Cả `translate` và `rewrite` đều giữ nhạc nền gốc (tách bằng Demucs, trộn với
 giọng đọc mới).
+
+### Chế độ quản lý pipeline (feature 008)
+
+Bật `--supervised` (hoặc công tắc **Quản lý pipeline** ở form tạo job trên web)
+để job **dừng lại 2 lần** cho bạn review và tinh chỉnh trước khi chạy tiếp:
+
+1. **Chốt lời thoại** — sau bước tách lời. Sửa những câu ASR nghe sai (tên riêng,
+   thuật ngữ) trước khi chúng lan xuống bản dịch, giọng đọc và sản phẩm cuối.
+2. **Chốt kịch bản** — sau bước sinh kịch bản. Đối chiếu từng câu dịch với câu
+   gốc, sửa chỗ chưa mượt, hoặc bấm **Sinh lại kịch bản** để dịch lại từ đầu.
+
+Ở mỗi chốt, job chuyển sang trạng thái **Chờ duyệt** và **không tự chạy tiếp** —
+kể cả sau khi restart hệ thống hay để đó nhiều ngày. Review/sửa/phê duyệt thực
+hiện **trên web UI** ở trang chi tiết job (CLI không có lệnh phê duyệt).
+
+Mốc thời gian từng câu chỉ để xem; xoá trắng nội dung một câu = bỏ câu đó. Job
+đang chờ duyệt **không chiếm suất xử lý**, nên bạn vẫn submit được job mới — đổi
+lại, nếu lúc bấm phê duyệt đang có job khác thực sự chạy thì lượt phê duyệt bị
+từ chối, chờ job kia xong rồi bấm lại.
+
+Mặc định chế độ này **TẮT** — job không bật vẫn chạy liền mạch như trước.
+
+### Làm mờ phụ đề gốc và chèn phụ đề mới đúng vị trí (feature 009)
+
+Với video nguồn đã có phụ đề burn sẵn (kiểu caption tự động TikTok/CapCut),
+bật `--hardsub-blur` để hệ thống **che mờ** đúng vùng chữ gốc và **chèn phụ
+đề mới** (nội dung đã dịch) đè lên đúng vị trí đó, cỡ chữ nhỏ hơn mặc định.
+**Bắt buộc kèm `--supervised`**: vị trí vùng cần mờ do bạn tự khoanh bằng tay
+trên web UI tại chốt lời thoại (chọn giữa: đã thử OCR tự động nhưng không khả
+thi — Tesseract không đọc được phần lớn kiểu chữ có viền/màu nổi bật phổ biến
+trên TikTok/YouTube Shorts sau khi video đã mã hoá).
+
+Mặc định coi **toàn bộ video** là có phụ đề gốc. Nếu chỉ một phần video có
+phụ đề (VD đoạn mở đầu không có), khai báo các đoạn **không có** bằng
+`--hardsub-no-ranges` (cùng cú pháp `--keep-original-ranges`, chỉnh lại được
+ngay tại chốt lời thoại) — đúng đoạn đó sẽ không bị mờ, phụ đề mới hiển thị
+theo vị trí/cỡ chữ mặc định.
+
+Khi job dừng ở chốt lời thoại, web UI hiện 1 khung hình đại diện của video —
+kéo chuột trên khung hình đó để khoanh đúng vùng chữ cần mờ, rồi lưu/phê
+duyệt như bình thường.
+
+Lưu ý khi khoanh: hãy khoanh vùng **cao đủ để che cả trường hợp phụ đề gốc
+xuống 2 dòng**, không chỉ vừa khít dòng chữ đang thấy trên khung hình mẫu —
+nếu không, ở những cảnh phụ đề gốc dài hơn, dòng thứ hai sẽ nằm ngoài vùng mờ
+và còn hiện trong video kết quả.
+
+Mặc định **TẮT** — job không bật vẫn chạy y như trước.
 
 ### Lồng tiếng khớp nhịp tự nhiên (feature 005)
 

@@ -10,6 +10,8 @@ export interface JobSummary {
   created_at: string;
   pinned: boolean;
   pinned_at: string | null;
+  // 008-supervised-pipeline: chốt đang chờ duyệt (null nếu job không chờ duyệt)
+  review_gate: "transcript" | "script" | null;
 }
 
 export interface JobDetail extends JobSummary {
@@ -32,6 +34,12 @@ export interface JobDetail extends JobSummary {
   // file gốc không còn/job tạo trước khi có field này)
   source_video_url: string | null;
   can_retry: boolean;
+  // 008-supervised-pipeline: job có bật chế độ quản lý pipeline; review_url chỉ
+  // khác null khi job thật sự đang chờ duyệt
+  supervised: boolean;
+  review_url: string | null;
+  // 009-hardsub-blur-reposition: job có bật làm mờ phụ đề gốc
+  hardsub_blur_enabled: boolean;
 }
 
 export interface Voice {
@@ -100,6 +108,9 @@ export function submitJob(
   ttsProvider?: string,
   voiceId?: string,
   keepOriginalRanges?: string,
+  supervised: boolean = false,
+  hardsubBlurEnabled: boolean = false,
+  hardsubNoRanges?: string,
 ) {
   return request<{ job_id: string }>("/api/jobs", {
     method: "POST",
@@ -107,11 +118,104 @@ export function submitJob(
       url,
       script_mode: scriptMode,
       dynamic_captions: dynamicCaptions,
+      supervised,
+      hardsub_blur_enabled: hardsubBlurEnabled,
       ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
       ...(voiceId ? { voice_id: voiceId } : {}),
       ...(keepOriginalRanges ? { keep_original_ranges: keepOriginalRanges } : {}),
+      ...(hardsubNoRanges ? { hardsub_no_ranges: hardsubNoRanges } : {}),
     }),
   });
+}
+
+// ── Chốt kiểm duyệt (008-supervised-pipeline) ───────────────────────────────
+
+export type ReviewGate = "transcript" | "script";
+
+export interface ReviewSegment {
+  /** 0-based, là KHOÁ định danh khi lưu — không dùng mốc thời gian làm khoá */
+  index: number;
+  /** Mốc thời gian chỉ để xem, không sửa được ở v1 (FR-016) */
+  start: number;
+  end: number;
+  /** Nội dung sửa được (chốt kịch bản: đây là bản dịch) */
+  text: string;
+  /** Câu gốc để đối chiếu — chỉ có ở chốt kịch bản (FR-010) */
+  source_text: string | null;
+}
+
+// 009-hardsub-blur-reposition: vùng phụ đề gốc do người dùng tự khoanh trên
+// khung hình đại diện (không còn OCR tự động — xem hardsub/detector.py)
+export interface HardsubBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ReviewPayload {
+  job_id: string;
+  gate: ReviewGate;
+  editable_field: "text" | "translated_text";
+  edited: boolean;
+  can_regenerate: boolean;
+  reached_at: string | null;
+  segments: ReviewSegment[];
+  // Chỉ có mặt khi job bật ĐỒNG THỜI hardsub_blur_enabled + supervised, VÀ
+  // khung hình đại diện đã trích được (FR-012)
+  hardsub_frame_url?: string;
+  hardsub_frame_size?: { width: number; height: number } | null;
+  hardsub_box?: HardsubBox | null;
+  hardsub_no_ranges?: string | null;
+}
+
+export function getReview(jobId: string) {
+  return request<ReviewPayload>(`/api/jobs/${jobId}/review`);
+}
+
+export function hardsubFrameUrl(jobId: string) {
+  return `/api/jobs/${jobId}/hardsub-frame`;
+}
+
+export function saveReview(
+  jobId: string,
+  gate: ReviewGate,
+  segments: { index: number; text: string }[],
+  hardsubBox?: HardsubBox,
+  hardsubNoRanges?: string,
+) {
+  return request<{
+    job_id: string;
+    gate: ReviewGate;
+    saved_count: number;
+    dropped_count: number;
+  }>(`/api/jobs/${jobId}/review`, {
+    method: "PUT",
+    body: JSON.stringify({
+      gate,
+      segments,
+      ...(hardsubBox ? { hardsub_box: hardsubBox } : {}),
+      ...(hardsubNoRanges !== undefined ? { hardsub_no_ranges: hardsubNoRanges } : {}),
+    }),
+  });
+}
+
+export function approveReview(jobId: string, gate: ReviewGate) {
+  return request<{
+    job_id: string;
+    approved_gate: ReviewGate;
+    resumed_status: string;
+  }>(`/api/jobs/${jobId}/review/approve`, {
+    method: "POST",
+    body: JSON.stringify({ gate }),
+  });
+}
+
+export function regenerateScript(jobId: string) {
+  return request<{ job_id: string; regenerated_count: number }>(
+    `/api/jobs/${jobId}/review/regenerate`,
+    { method: "POST" },
+  );
 }
 
 export interface DownloadedVideo {
@@ -148,6 +252,35 @@ export function deleteJob(jobId: string) {
 
 export function retryJob(jobId: string) {
   return request<{ job_id: string }>(`/api/jobs/${jobId}/retry`, { method: "POST" });
+}
+
+// 010-rerun-from-step: quay lại một bước trước đó để thử lại, thay vì tạo job mới
+export const RERUN_STEPS = [
+  "downloading",
+  "transcribing",
+  "scripting",
+  "synthesizing",
+  "merging",
+] as const;
+export type RerunStep = (typeof RERUN_STEPS)[number];
+
+export function rerunFromStep(
+  jobId: string,
+  step: RerunStep,
+  voice?: { ttsProvider: string; voiceId: string },
+) {
+  return request<{ job_id: string; resumed_status: string }>(
+    `/api/jobs/${jobId}/rerun-from`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        step,
+        ...(voice
+          ? { tts_provider: voice.ttsProvider, voice_id: voice.voiceId }
+          : {}),
+      }),
+    },
+  );
 }
 
 export function outputUrl(jobId: string) {

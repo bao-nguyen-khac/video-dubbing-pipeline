@@ -28,6 +28,38 @@ def get_media_duration(media_path: str | Path) -> float:
     return 0.0
 
 
+def get_video_frame_size(media_path: str | Path) -> dict:
+    """
+    Lấy kích thước khung hình video (width/height) bằng ffprobe — dùng để tính
+    cỡ chữ và vị trí từng dòng phụ đề theo pixel thật (009-hardsub-blur-
+    reposition, merge/text_renderer.py::render_cue_overlays()).
+
+    Trả {"width": 0, "height": 0} nếu không đọc được (không chặn caller — để
+    ffmpeg tự báo lỗi rõ ràng hơn ở bước burn nếu thật sự có vấn đề).
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0",
+                str(media_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split(",")
+            if len(parts) >= 2:
+                return {"width": int(parts[0]), "height": int(parts[1])}
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
+    return {"width": 0, "height": 0}
+
+
 def has_audio_stream(media_path: str | Path) -> bool:
     """
     True nếu file có ít nhất 1 audio stream, bằng ffprobe.

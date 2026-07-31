@@ -17,6 +17,9 @@ def start_job(
     dynamic_captions: bool = False,
     tts_provider: str = "edge-tts",
     voice_id: str | None = None,
+    supervised: bool = False,
+    hardsub_blur_enabled: bool = False,
+    hardsub_no_ranges: str | None = None,
 ) -> None:
     """
     Spawn một daemon thread chạy pipeline.run_pipeline(). Không trả về gì —
@@ -25,7 +28,17 @@ def start_job(
     """
     thread = threading.Thread(
         target=_run_and_swallow_exit,
-        args=(url, script_mode, job_id, dynamic_captions, tts_provider, voice_id),
+        args=(
+            url,
+            script_mode,
+            job_id,
+            dynamic_captions,
+            tts_provider,
+            voice_id,
+            supervised,
+            hardsub_blur_enabled,
+            hardsub_no_ranges,
+        ),
         daemon=True,
     )
     thread.start()
@@ -38,6 +51,9 @@ def _run_and_swallow_exit(
     dynamic_captions: bool = False,
     tts_provider: str = "edge-tts",
     voice_id: str | None = None,
+    supervised: bool = False,
+    hardsub_blur_enabled: bool = False,
+    hardsub_no_ranges: str | None = None,
 ) -> None:
     """
     run_pipeline() tự gọi sys.exit() khi hoàn tất/lỗi (thiết kế cho CLI). Trong
@@ -52,6 +68,9 @@ def _run_and_swallow_exit(
             dynamic_captions=dynamic_captions,
             tts_provider=tts_provider,
             voice_id=voice_id,
+            supervised=supervised,
+            hardsub_blur_enabled=hardsub_blur_enabled,
+            hardsub_no_ranges=hardsub_no_ranges,
         )
     except SystemExit:
         pass

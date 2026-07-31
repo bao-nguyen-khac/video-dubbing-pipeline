@@ -35,7 +35,7 @@ function JobRow({
         <span title={absoluteTime(job.created_at)}>{relativeTime(job.created_at)}</span>
       </div>
       <div className="job-row__status">
-        <StatusBadge status={job.status} />
+        <StatusBadge status={job.status} reviewGate={job.review_gate} />
         <button
           type="button"
           className="btn btn--subtle"

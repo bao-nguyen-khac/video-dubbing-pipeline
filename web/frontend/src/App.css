@@ -510,6 +510,86 @@
   border-color: var(--danger-border);
 }
 
+/* 008-supervised-pipeline: job chờ duyệt — KHÔNG dùng màu running (nó không
+   đang chạy, đã nhả suất cho job khác) cũng không dùng màu failed (nó không
+   lỗi). Chấm không nhấp nháy: người dùng phải hành động, hệ thống đang đứng
+   im chờ (FR-006). */
+.badge--waiting {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: var(--warn-border);
+}
+
+/* ── Bảng review tại chốt kiểm duyệt (008) ────────────────────────────────── */
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.review-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.5rem;
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+}
+
+.review-row__time {
+  flex: none;
+  width: 6.5rem;
+  padding-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  /* Mốc thời gian chỉ để xem (FR-016) — không phải input */
+  user-select: none;
+}
+
+.review-row__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-row__source {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+  line-height: 1.4;
+}
+
+.review-row__input {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.review-row__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .review-row {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .review-row__time {
+    width: auto;
+    padding-top: 0;
+  }
+}
+
 .badge--idle {
   background: var(--surface-2);
   color: var(--text-muted);

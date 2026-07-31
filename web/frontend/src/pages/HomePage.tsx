@@ -33,6 +33,11 @@ export default function HomePage() {
   const [url, setUrl] = useState(() => searchParams.get("url") ?? "");
   const [scriptMode, setScriptMode] = useState<ScriptMode>("translate");
   const [dynamicCaptions, setDynamicCaptions] = useState(false);
+  // 008-supervised-pipeline: mặc định TẮT — job chạy liền mạch như trước (FR-002)
+  const [supervised, setSupervised] = useState(false);
+  // 009-hardsub-blur-reposition: mặc định TẮT (FR-002)
+  const [hardsubBlurEnabled, setHardsubBlurEnabled] = useState(false);
+  const [hardsubNoRanges, setHardsubNoRanges] = useState("");
   const [keepRanges, setKeepRanges] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoiceKey, setSelectedVoiceKey] = useState<string>("");
@@ -58,6 +63,14 @@ export default function HomePage() {
         // với giọng mặc định (FR-003 áp dụng tinh thần tương tự)
       });
   }, []);
+
+  // 009: tắt "Quản lý pipeline" thì làm mờ phụ đề gốc cũng phải tắt theo —
+  // không có chốt nào để tự khoanh vùng nếu supervised=false (backend từ chối)
+  useEffect(() => {
+    if (!supervised && hardsubBlurEnabled) {
+      setHardsubBlurEnabled(false);
+    }
+  }, [supervised, hardsubBlurEnabled]);
 
   function stopPolling() {
     if (pollRef.current !== null) {
@@ -90,6 +103,10 @@ export default function HomePage() {
     try {
       const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
       const dubbing = scriptMode === "translate" || scriptMode === "rewrite";
+      // 009 FR-009: tính năng chỉ có ý nghĩa khi thực sự có phụ đề hiển thị —
+      // phụ đề tự động, hoặc lồng tiếng có bật phụ đề động. Không gửi cờ ở
+      // các chế độ khác cho đỡ gây hiểu nhầm (cùng tinh thần FR-008 của 008).
+      const hasSubtitleDisplay = scriptMode === "subtitle" || (dubbing && dynamicCaptions);
       const { job_id } = await submitJob(
         url,
         scriptMode,
@@ -97,6 +114,13 @@ export default function HomePage() {
         dubbing ? selectedVoice?.provider : undefined,
         dubbing ? selectedVoice?.voice_id : undefined,
         dubbing && keepRanges.trim() ? keepRanges.trim() : undefined,
+        // Chế độ "chỉ tải" không có bước tách lời/sinh kịch bản nên không có
+        // chốt nào để dừng — không gửi cờ cho đỡ gây hiểu nhầm (FR-008)
+        scriptMode !== "download" && supervised,
+        hasSubtitleDisplay && hardsubBlurEnabled,
+        hasSubtitleDisplay && hardsubBlurEnabled && hardsubNoRanges.trim()
+          ? hardsubNoRanges.trim()
+          : undefined,
       );
       const detail = await getJob(job_id);
       setJob(detail);
@@ -142,6 +166,8 @@ export default function HomePage() {
   const isBusy = job !== null && !TERMINAL_STATUSES.has(job.status);
   const isDubbing = scriptMode === "translate" || scriptMode === "rewrite";
   const locked = isBusy || submitting;
+  // 009 FR-009: chỉ chế độ có phụ đề hiển thị thật sự mới có gì để làm mờ/chèn đè
+  const hasSubtitleDisplay = scriptMode === "subtitle" || (isDubbing && dynamicCaptions);
 
   // Nhóm giọng theo provider để danh sách dài vẫn dễ chọn
   const voiceGroups = useMemo(() => {
@@ -267,6 +293,78 @@ export default function HomePage() {
                   </span>
                 </span>
               </label>
+            </div>
+          )}
+
+          {/* 008: chốt kiểm duyệt chỉ có ở bước tách lời + sinh kịch bản, nên
+              chế độ "chỉ tải video" không hiện công tắc này (FR-008) */}
+          {scriptMode !== "download" && (
+            <div className="field">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={supervised}
+                  onChange={(e) => setSupervised(e.target.checked)}
+                  disabled={locked}
+                />
+                <span className="switch__track" />
+                <span className="switch__text">
+                  <span className="switch__name">Quản lý pipeline</span>
+                  <span className="switch__desc">
+                    Dừng lại cho tôi duyệt sau bước tách lời và sau bước sinh kịch bản
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* 009: chỉ có ý nghĩa khi thực sự có phụ đề hiển thị (FR-009), và
+              BẮT BUỘC kèm Quản lý pipeline — vùng cần mờ do người dùng tự
+              khoanh tại chốt lời thoại, không có chốt nào nếu tắt supervised */}
+          {hasSubtitleDisplay && supervised && (
+            <div className="field">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={hardsubBlurEnabled}
+                  onChange={(e) => setHardsubBlurEnabled(e.target.checked)}
+                  disabled={locked}
+                />
+                <span className="switch__track" />
+                <span className="switch__text">
+                  <span className="switch__name">Làm mờ phụ đề gốc</span>
+                  <span className="switch__desc">
+                    Che phụ đề tiếng Anh có sẵn trên hình và chèn phụ đề mới đúng chỗ đó —
+                    bạn sẽ tự khoanh vùng trên khung hình mẫu ở chốt lời thoại
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+          {hasSubtitleDisplay && !supervised && (
+            <p className="field__hint">
+              Bật "Quản lý pipeline" ở trên để dùng tính năng làm mờ phụ đề gốc (cần chốt lời
+              thoại để bạn tự khoanh vùng).
+            </p>
+          )}
+
+          {hasSubtitleDisplay && hardsubBlurEnabled && (
+            <div className="field">
+              <label className="field__label" htmlFor="hardsub-no-ranges">
+                Đoạn không có phụ đề gốc (tuỳ chọn)
+              </label>
+              <input
+                id="hardsub-no-ranges"
+                type="text"
+                className="input"
+                placeholder="vd: 0:15-0:30, 1:05-end"
+                value={hardsubNoRanges}
+                onChange={(e) => setHardsubNoRanges(e.target.value)}
+                disabled={locked}
+              />
+              <span className="field__hint">
+                Các đoạn này sẽ KHÔNG bị làm mờ; để trống = cả video đều có phụ đề gốc.
+              </span>
             </div>
           )}
 

@@ -18,9 +18,11 @@ from pydantic import BaseModel
 
 from pipeline import (
     JOBS_DIR,
+    RERUN_STEPS,
     create_job,
     detect_platform,
     read_job,
+    rerun_from_step,
     status_from_artifacts,
 )
 from pipeline import _write_job as write_job
@@ -37,6 +39,13 @@ _STATUS_PROGRESS_MAP: dict[str, int] = {
     "synthesizing": 65,
     "merging": 82,
     "done": 100,
+}
+
+# 008-supervised-pipeline: job chờ duyệt nằm GIỮA hai bước — bước trước đã xong,
+# bước sau chưa bắt đầu. Chèn vào khoảng trống của _STATUS_PROGRESS_MAP ở trên.
+_REVIEW_GATE_PROGRESS: dict[str, int] = {
+    "transcript": 40,  # giữa transcribing (32) và scripting (48)
+    "script": 56,  # giữa scripting (48) và synthesizing (65)
 }
 
 
@@ -64,14 +73,20 @@ def _iter_all_jobs():
 
 def find_running_job_id() -> str | None:
     """
-    Trả về job_id của job đang xử lý (status không thuộc {done, failed}), hoặc
-    None nếu không có job nào đang chạy.
+    Trả về job_id của job đang xử lý (status không thuộc {done, failed,
+    awaiting_review}), hoặc None nếu không có job nào đang chạy.
 
     Luôn quét trực tiếp jobs/*/job.json (không dùng biến in-memory) để không bị
     lệch trạng thái khi backend restart giữa lúc job đang chạy (research.md).
+
+    008-supervised-pipeline: `awaiting_review` cố ý KHÔNG tính là đang xử lý —
+    job chờ duyệt không tốn tài nguyên nào, nên phải nhả suất để người dùng
+    submit job mới (FR-021). Đây cũng là điều kiện để chính lượt phê duyệt chạy
+    được: nếu không loại, job đang chờ duyệt sẽ tự thấy mình "đang chạy" và tự
+    chặn lượt phê duyệt của chính nó.
     """
     for job in _iter_all_jobs():
-        if job.get("status") not in ("done", "failed"):
+        if job.get("status") not in ("done", "failed", "awaiting_review"):
             return job.get("job_id")
     return None
 
@@ -87,6 +102,8 @@ def status_to_progress(job: dict) -> int:
     status = job.get("status", "pending")
     if status == "failed":
         status = status_from_artifacts(job)
+    if status == "awaiting_review":
+        return _REVIEW_GATE_PROGRESS.get(job.get("review_gate"), 0)
     return _STATUS_PROGRESS_MAP.get(status, 0)
 
 
@@ -99,6 +116,9 @@ def _job_to_summary(job: dict) -> dict:
         "status": job["status"],
         "progress_percent": status_to_progress(job),
         "created_at": job["created_at"],
+        # 008: chốt đang chờ duyệt — để danh sách job nói rõ "chờ duyệt tại chốt
+        # nào" thay vì chỉ "chờ duyệt" (FR-006). None với mọi job khác.
+        "review_gate": job.get("review_gate"),
         # Ghim job lên mục "Ưu tiên" ở danh sách lịch sử
         "pinned": bool(job.get("pinned", False)),
         "pinned_at": job.get("pinned_at"),
@@ -153,6 +173,16 @@ def _job_to_detail(job: dict) -> dict:
             "tts_failed_segments": job.get("tts_failed_segments", 0),
             "error": job.get("error"),
             "warnings": job.get("warnings", {}),
+            # 008-supervised-pipeline: chế độ quản lý pipeline + chỗ lấy nội dung
+            # chốt. review_url chỉ có khi thật sự đang chờ duyệt.
+            "supervised": job.get("supervised", False),
+            # 009-hardsub-blur-reposition
+            "hardsub_blur_enabled": job.get("hardsub_blur_enabled", False),
+            "review_url": (
+                f"/api/jobs/{job['job_id']}/review"
+                if job["status"] == "awaiting_review"
+                else None
+            ),
             "output_video_url": f"/api/jobs/{job['job_id']}/output" if has_output else None,
             "source_video_url": (
                 f"/api/jobs/{job['job_id']}/source" if _get_source_video_path(job) else None
@@ -171,6 +201,14 @@ class SubmitJobRequest(BaseModel):
     voice_id: str | None = None
     # Khoảng giữ nguyên audio gốc (nhạc/tiếng hát), vd "0:15-0:30, 1:05-end"
     keep_original_ranges: str | None = None
+    # 008-supervised-pipeline: dừng chờ phê duyệt sau bước tách lời và sau bước
+    # sinh kịch bản. Mặc định TẮT — client cũ không gửi field này chạy như trước.
+    supervised: bool = False
+    # 009-hardsub-blur-reposition: làm mờ phụ đề gốc + chèn phụ đề mới đúng vị
+    # trí. Mặc định TẮT (FR-002). hardsub_no_ranges: khoảng KHÔNG có phụ đề gốc
+    # (field ĐỘC LẬP với keep_original_ranges — FR-004).
+    hardsub_blur_enabled: bool = False
+    hardsub_no_ranges: str | None = None
 
 
 @router.post("", status_code=201)
@@ -191,15 +229,21 @@ async def submit_job(body: SubmitJobRequest):
     if running_job_id:
         return _error(409, "Đang có job xử lý, vui lòng chờ", running_job_id=running_job_id)
 
-    job = create_job(
-        body.url,
-        platform,
-        body.script_mode,
-        dynamic_captions=body.dynamic_captions,
-        tts_provider=body.tts_provider,
-        voice_id=body.voice_id,
-        keep_original_ranges=body.keep_original_ranges,
-    )
+    try:
+        job = create_job(
+            body.url,
+            platform,
+            body.script_mode,
+            dynamic_captions=body.dynamic_captions,
+            tts_provider=body.tts_provider,
+            voice_id=body.voice_id,
+            keep_original_ranges=body.keep_original_ranges,
+            supervised=body.supervised,
+            hardsub_blur_enabled=body.hardsub_blur_enabled,
+            hardsub_no_ranges=body.hardsub_no_ranges,
+        )
+    except ValueError as e:
+        return _error(400, str(e))
     start_job(
         body.url,
         body.script_mode,
@@ -207,6 +251,9 @@ async def submit_job(body: SubmitJobRequest):
         dynamic_captions=body.dynamic_captions,
         tts_provider=body.tts_provider,
         voice_id=body.voice_id,
+        supervised=body.supervised,
+        hardsub_blur_enabled=body.hardsub_blur_enabled,
+        hardsub_no_ranges=body.hardsub_no_ranges,
     )
     return {"job_id": job["job_id"]}
 
@@ -262,6 +309,25 @@ async def get_job_source(job_id: str):
     return FileResponse(source_path, media_type="video/mp4", filename=f"{job_id}-source.mp4")
 
 
+@router.get("/{job_id}/hardsub-frame")
+async def get_hardsub_frame(job_id: str):
+    """
+    GET /api/jobs/{job_id}/hardsub-frame — khung hình đại diện để người dùng
+    tự khoanh vùng phụ đề gốc cần làm mờ tại chốt kiểm duyệt (009 — vùng do
+    người dùng khoanh tay, không còn OCR tự động).
+    """
+    try:
+        read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    frame_path = JOBS_DIR / job_id / "hardsub_frame.png"
+    if not frame_path.exists():
+        return _error(404, "Job chưa có khung hình đại diện")
+
+    return FileResponse(frame_path, media_type="image/png")
+
+
 @router.post("/{job_id}/retry", status_code=202)
 async def retry_job(job_id: str):
     """
@@ -290,8 +356,81 @@ async def retry_job(job_id: str):
         dynamic_captions=job.get("dynamic_captions", False),
         tts_provider=job.get("tts_provider", "edge-tts"),
         voice_id=job.get("voice_id"),
+        supervised=job.get("supervised", False),
+        hardsub_blur_enabled=job.get("hardsub_blur_enabled", False),
+        hardsub_no_ranges=job.get("hardsub_no_ranges"),
     )
     return {"job_id": job_id}
+
+
+class RerunFromStepRequest(BaseModel):
+    step: str  # "downloading" | "transcribing" | "scripting" | "synthesizing" | "merging"
+    # Đổi giọng đọc trước khi chạy lại — chỉ có tác dụng nếu `step` còn đi qua
+    # bước synthesizing (mọi bước TRỪ "merging"); bỏ qua an toàn nếu không.
+    tts_provider: str | None = None
+    voice_id: str | None = None
+
+
+@router.post("/{job_id}/rerun-from", status_code=202)
+async def rerun_job_from_step(job_id: str, body: RerunFromStepRequest):
+    """
+    POST /api/jobs/{job_id}/rerun-from — quay lại một bước TRƯỚC ĐÓ để thử lại,
+    thay vì tạo job mới (010-rerun-from-step).
+
+    Xoá sạch artifact của `step` và MỌI bước sau (kể cả kết quả cuối
+    `output.mp4` nếu chạy lại từ trước bước merging) — đây là hành động PHÁ
+    HUỶ, chỗ gọi (frontend) MUST xác nhận với người dùng trước khi gọi.
+
+    tts_provider/voice_id (tuỳ chọn): đổi giọng đọc trước khi chạy lại, để đổi
+    giọng mà không phải tạo job mới — tải/tách lời/kịch bản đã có đều giữ
+    nguyên, chỉ TTS chạy lại. Ghi vào job.json TRƯỚC khi gọi rerun_from_step()
+    nên không bị field nào của bước đó xoá theo (voice_id không thuộc
+    _RERUN_ARTIFACT_KEYS/_RERUN_EXTRA_KEYS của bất kỳ bước nào).
+    """
+    if body.step not in RERUN_STEPS:
+        return _error(400, f"Bước không hợp lệ: {body.step}. Chỉ chạy lại được từ: {RERUN_STEPS}")
+
+    if body.tts_provider is not None and body.tts_provider not in ("edge-tts", "lucyai", "omnivoice"):
+        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
+
+    try:
+        job = read_job(job_id)
+    except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+
+    # Chỉ an toàn khi job KHÔNG có thread nào đang thực sự xử lý nó — done/
+    # failed/awaiting_review đều không có thread nền đang chạy.
+    if job["status"] not in ("done", "failed", "awaiting_review"):
+        return _error(
+            409,
+            f"Job đang xử lý (trạng thái: {job['status']}), không chạy lại được lúc này",
+        )
+
+    running_job_id = find_running_job_id()
+    if running_job_id:
+        return _error(409, "Đang có job khác xử lý, vui lòng chờ", running_job_id=running_job_id)
+
+    if body.tts_provider is not None or body.voice_id is not None:
+        if body.tts_provider is not None:
+            job["tts_provider"] = body.tts_provider
+        if body.voice_id is not None:
+            job["voice_id"] = body.voice_id
+        write_job(job_id, job)
+
+    rerun_from_step(job_id, body.step)
+
+    start_job(
+        job["source_url"],
+        job["script_mode"],
+        job_id,
+        dynamic_captions=job.get("dynamic_captions", False),
+        tts_provider=job.get("tts_provider", "edge-tts"),
+        voice_id=job.get("voice_id"),
+        supervised=job.get("supervised", False),
+        hardsub_blur_enabled=job.get("hardsub_blur_enabled", False),
+        hardsub_no_ranges=job.get("hardsub_no_ranges"),
+    )
+    return {"job_id": job_id, "resumed_status": body.step}
 
 
 class PinRequest(BaseModel):
@@ -329,7 +468,9 @@ async def delete_job(job_id: str):
         return _error(404, "Job không tồn tại")
 
     # Chỉ chặn khi job đang THỰC SỰ xử lý (một bước giữa chừng) — job
-    # pending/done/failed đều xoá được.
+    # pending/done/failed đều xoá được. 008: "awaiting_review" cố ý KHÔNG có
+    # trong danh sách này — job chờ duyệt xoá được như job chờ/xong/lỗi
+    # (FR-022). Đừng "sửa cho đủ" bằng cách thêm nó vào.
     if job.get("status") in ("downloading", "transcribing", "scripting", "synthesizing", "merging"):
         return _error(409, "Job đang xử lý, không xoá được — chờ xong hoặc thử lại sau")
 
