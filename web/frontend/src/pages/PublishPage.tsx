@@ -333,7 +333,7 @@ export default function PublishPage() {
   }
 
   return (
-    <AppShell narrow>
+    <AppShell>
       <div className="page-head">
         <h1>Đăng video</h1>
         <p className="page-head__lead">
@@ -350,8 +350,10 @@ export default function PublishPage() {
 
       {!configError && (
         <>
+        <div className="publish-layout">
           {/* ── Kết nối kênh ─────────────────────────────────────────── */}
           <div className="card">
+            <span className="card__eyebrow">Kênh</span>
             <div className="card__title">Kênh đã liên kết</div>
 
             {connectionError && (
@@ -407,6 +409,7 @@ export default function PublishPage() {
 
           {/* ── Form đăng ────────────────────────────────────────────── */}
           <form className="card" onSubmit={handleSubmit}>
+            <span className="card__eyebrow">Đăng bài</span>
             <div className="card__title">Đăng video mới</div>
 
             <div className="field">
@@ -572,11 +575,13 @@ export default function PublishPage() {
                     : "Đăng"}
             </button>
           </form>
+        </div>
 
           {notice && <Callout tone="info">{notice}</Callout>}
 
           {/* ── Đang chờ đăng (007-schedule-publish, FR-010/FR-011) ───── */}
           <div className="card">
+            <span className="card__eyebrow">Hàng chờ</span>
             <div className="card__title">Đang chờ đăng</div>
 
             {scheduledAttempts.length === 0 && (
@@ -614,6 +619,7 @@ export default function PublishPage() {
           {/* ── Tiến trình lượt đăng hiện tại ─────────────────────────── */}
           {current && (
             <div className="card">
+              <span className="card__eyebrow">Đang xử lý</span>
               <div className="card__title">Lượt đăng hiện tại</div>
               <p>
                 <span className={`badge badge--${attemptBadgeKind(current.status)}`}>
@@ -648,6 +654,7 @@ export default function PublishPage() {
 
           {/* ── Lịch sử ──────────────────────────────────────────────── */}
           <div className="card">
+            <span className="card__eyebrow">Nhật ký</span>
             <div
               className="card__title"
               style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}

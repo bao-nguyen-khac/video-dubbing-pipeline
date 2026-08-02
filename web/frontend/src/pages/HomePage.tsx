@@ -180,8 +180,10 @@ export default function HomePage() {
     return [...groups.entries()];
   }, [voices]);
 
+  const showAdvancedCard = scriptMode !== "download";
+
   return (
-    <AppShell narrow>
+    <AppShell>
       <div className="page-head">
         <h1>Tạo job mới</h1>
         <p className="page-head__lead">
@@ -190,8 +192,12 @@ export default function HomePage() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit}>
-        <div className="card">
+      <form onSubmit={handleSubmit} className="home-layout">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <audio ref={audioRef} hidden />
+
+        <div className={`card${isDubbing ? "" : " home-layout__full"}`}>
+          <span className="card__eyebrow">Nguồn</span>
           <div className="field">
             <label className="field__label" htmlFor="video-url">
               URL video
@@ -230,11 +236,14 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+        </div>
 
-          {isDubbing && (
+        {isDubbing && (
+          <div className="card">
+            <span className="card__eyebrow">Giọng đọc</span>
             <div className="field">
               <label className="field__label" htmlFor="voice-select">
-                Giọng đọc
+                Chọn giọng
               </label>
               <div className="voice-picker">
                 <select
@@ -271,12 +280,7 @@ export default function HomePage() {
                 </span>
               )}
             </div>
-          )}
 
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio ref={audioRef} hidden />
-
-          {isDubbing && (
             <div className="field">
               <label className="switch">
                 <input
@@ -294,11 +298,14 @@ export default function HomePage() {
                 </span>
               </label>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* 008: chốt kiểm duyệt chỉ có ở bước tách lời + sinh kịch bản, nên
-              chế độ "chỉ tải video" không hiện công tắc này (FR-008) */}
-          {scriptMode !== "download" && (
+        {/* 008: chốt kiểm duyệt chỉ có ở bước tách lời + sinh kịch bản, nên
+            chế độ "chỉ tải video" không có gì để gom vào thẻ này (FR-008) */}
+        {showAdvancedCard && (
+          <div className="card home-layout__full">
+            <span className="card__eyebrow">Tuỳ chọn nâng cao</span>
             <div className="field">
               <label className="switch">
                 <input
@@ -316,85 +323,85 @@ export default function HomePage() {
                 </span>
               </label>
             </div>
-          )}
 
-          {/* 009: chỉ có ý nghĩa khi thực sự có phụ đề hiển thị (FR-009), và
-              BẮT BUỘC kèm Quản lý pipeline — vùng cần mờ do người dùng tự
-              khoanh tại chốt lời thoại, không có chốt nào nếu tắt supervised */}
-          {hasSubtitleDisplay && supervised && (
-            <div className="field">
-              <label className="switch">
+            {/* 009: chỉ có ý nghĩa khi thực sự có phụ đề hiển thị (FR-009), và
+                BẮT BUỘC kèm Quản lý pipeline — vùng cần mờ do người dùng tự
+                khoanh tại chốt lời thoại, không có chốt nào nếu tắt supervised */}
+            {hasSubtitleDisplay && supervised && (
+              <div className="field">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={hardsubBlurEnabled}
+                    onChange={(e) => setHardsubBlurEnabled(e.target.checked)}
+                    disabled={locked}
+                  />
+                  <span className="switch__track" />
+                  <span className="switch__text">
+                    <span className="switch__name">Làm mờ phụ đề gốc</span>
+                    <span className="switch__desc">
+                      Che phụ đề tiếng Anh có sẵn trên hình và chèn phụ đề mới đúng chỗ đó —
+                      bạn sẽ tự khoanh vùng trên khung hình mẫu ở chốt lời thoại
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+            {hasSubtitleDisplay && !supervised && (
+              <p className="field__hint">
+                Bật "Quản lý pipeline" ở trên để dùng tính năng làm mờ phụ đề gốc (cần chốt lời
+                thoại để bạn tự khoanh vùng).
+              </p>
+            )}
+
+            {hasSubtitleDisplay && hardsubBlurEnabled && (
+              <div className="field">
+                <label className="field__label" htmlFor="hardsub-no-ranges">
+                  Đoạn không có phụ đề gốc (tuỳ chọn)
+                </label>
                 <input
-                  type="checkbox"
-                  checked={hardsubBlurEnabled}
-                  onChange={(e) => setHardsubBlurEnabled(e.target.checked)}
+                  id="hardsub-no-ranges"
+                  type="text"
+                  className="input"
+                  placeholder="vd: 0:15-0:30, 1:05-end"
+                  value={hardsubNoRanges}
+                  onChange={(e) => setHardsubNoRanges(e.target.value)}
                   disabled={locked}
                 />
-                <span className="switch__track" />
-                <span className="switch__text">
-                  <span className="switch__name">Làm mờ phụ đề gốc</span>
-                  <span className="switch__desc">
-                    Che phụ đề tiếng Anh có sẵn trên hình và chèn phụ đề mới đúng chỗ đó —
-                    bạn sẽ tự khoanh vùng trên khung hình mẫu ở chốt lời thoại
-                  </span>
+                <span className="field__hint">
+                  Các đoạn này sẽ KHÔNG bị làm mờ; để trống = cả video đều có phụ đề gốc.
                 </span>
-              </label>
-            </div>
-          )}
-          {hasSubtitleDisplay && !supervised && (
-            <p className="field__hint">
-              Bật "Quản lý pipeline" ở trên để dùng tính năng làm mờ phụ đề gốc (cần chốt lời
-              thoại để bạn tự khoanh vùng).
-            </p>
-          )}
+              </div>
+            )}
 
-          {hasSubtitleDisplay && hardsubBlurEnabled && (
-            <div className="field">
-              <label className="field__label" htmlFor="hardsub-no-ranges">
-                Đoạn không có phụ đề gốc (tuỳ chọn)
-              </label>
-              <input
-                id="hardsub-no-ranges"
-                type="text"
-                className="input"
-                placeholder="vd: 0:15-0:30, 1:05-end"
-                value={hardsubNoRanges}
-                onChange={(e) => setHardsubNoRanges(e.target.value)}
-                disabled={locked}
-              />
-              <span className="field__hint">
-                Các đoạn này sẽ KHÔNG bị làm mờ; để trống = cả video đều có phụ đề gốc.
-              </span>
-            </div>
-          )}
-
-          {isDubbing && (
-            <div className="field">
-              <label className="field__label" htmlFor="keep-ranges">
-                Giữ nguyên audio gốc (tuỳ chọn)
-              </label>
-              <input
-                id="keep-ranges"
-                type="text"
-                className="input"
-                placeholder="vd: 0:15-0:30, 1:05-end"
-                value={keepRanges}
-                onChange={(e) => setKeepRanges(e.target.value)}
-                disabled={locked}
-              />
-              <span className="field__hint">
-                Khoảng thời gian giữ nguyên nhạc/tiếng hát gốc, KHÔNG lồng tiếng đè.
-                Nhiều khoảng ngăn bằng dấu phẩy; dùng "end" cho tới hết video.
-              </span>
-            </div>
-          )}
-
-          <div className="field">
-            <button type="submit" className="btn btn--primary btn--block" disabled={locked}>
-              {submitting && <span className="btn__spinner" />}
-              {submitting ? "Đang gửi..." : isBusy ? "Đang xử lý job hiện tại" : "Chạy pipeline"}
-            </button>
+            {isDubbing && (
+              <div className="field">
+                <label className="field__label" htmlFor="keep-ranges">
+                  Giữ nguyên audio gốc (tuỳ chọn)
+                </label>
+                <input
+                  id="keep-ranges"
+                  type="text"
+                  className="input"
+                  placeholder="vd: 0:15-0:30, 1:05-end"
+                  value={keepRanges}
+                  onChange={(e) => setKeepRanges(e.target.value)}
+                  disabled={locked}
+                />
+                <span className="field__hint">
+                  Khoảng thời gian giữ nguyên nhạc/tiếng hát gốc, KHÔNG lồng tiếng đè.
+                  Nhiều khoảng ngăn bằng dấu phẩy; dùng "end" cho tới hết video.
+                </span>
+              </div>
+            )}
           </div>
+        )}
+
+        <div className="home-layout__full home-submit">
+          <button type="submit" className="btn btn--primary btn--block" disabled={locked}>
+            {submitting && <span className="btn__spinner" />}
+            {submitting ? "Đang gửi..." : isBusy ? "Đang xử lý job hiện tại" : "Chạy pipeline"}
+          </button>
         </div>
       </form>
 

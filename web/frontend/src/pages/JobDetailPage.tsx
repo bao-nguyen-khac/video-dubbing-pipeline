@@ -28,6 +28,7 @@ import {
   STAGES,
   TERMINAL_STATUSES,
 } from "../lib/labels";
+import { confirm } from "../lib/confirm";
 
 // 010-rerun-from-step: nhãn tiếng Việt cho từng bước, tái dùng đúng chữ đã có
 // ở dải tiến trình (STAGES) để không lệch tên bước ở 2 chỗ khác nhau
@@ -235,11 +236,15 @@ export default function JobDetailPage() {
     // Hành động PHÁ HUỶ — xoá artifact của bước này và mọi bước sau (kể cả
     // output.mp4 nếu chạy lại từ trước bước ghép video)
     const confirmMsg = changingVoice
-      ? `Chạy lại từ bước "${RERUN_STEP_LABELS[step]}" với giọng đọc "${changingVoice.name}", sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có). Tiếp tục?`
-      : `Chạy lại từ bước "${RERUN_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có). Tiếp tục?`;
-    if (!window.confirm(confirmMsg)) {
-      return;
-    }
+      ? `Chạy lại từ bước "${RERUN_STEP_LABELS[step]}" với giọng đọc "${changingVoice.name}", sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có).`
+      : `Chạy lại từ bước "${RERUN_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có).`;
+    const ok = await confirm({
+      title: "Chạy lại từ bước trước đó?",
+      message: confirmMsg,
+      confirmLabel: "Chạy lại",
+      tone: "danger",
+    });
+    if (!ok) return;
     setError(null);
     setRerunning(true);
     try {
@@ -270,7 +275,7 @@ export default function JobDetailPage() {
     job?.status === "done" && job.dynamic_captions && !job.subtitles_burned;
 
   return (
-    <AppShell narrow>
+    <AppShell>
       <Link to="/jobs" className="back-link">
         <IconArrowLeft />
         Lịch sử job
@@ -299,8 +304,10 @@ export default function JobDetailPage() {
       )}
 
       {job && (
-        <>
+        <div className="detail-layout">
+        <div className="detail-layout__main">
           <div className="card">
+            <span className="card__eyebrow">Tiến trình</span>
             <JobProgress
               status={job.status}
               progressPercent={job.progress_percent}
@@ -450,6 +457,7 @@ export default function JobDetailPage() {
 
           {job.status === "done" && job.output_video_url && (
             <div className="card">
+              <span className="card__eyebrow">Kết quả</span>
               <div className="card__title">
                 <h2>So sánh đầu vào / kết quả</h2>
               </div>
@@ -475,11 +483,11 @@ export default function JobDetailPage() {
               </div>
             </div>
           )}
+        </div>
 
+        <aside className="detail-layout__side">
           <div className="card">
-            <div className="card__title">
-              <h2>Thông tin job</h2>
-            </div>
+            <span className="card__eyebrow">Thông tin job</span>
             <div className="detail-grid">
               <div className="detail-item">
                 <div className="detail-item__label">Nguồn</div>
@@ -519,7 +527,8 @@ export default function JobDetailPage() {
               </div>
             </div>
           </div>
-        </>
+        </aside>
+        </div>
       )}
     </AppShell>
   );

@@ -1,6 +1,37 @@
 <!--
 Sync Impact Report
-- Version change: 1.9.0 → 1.10.0
+- Version change: 1.11.0 → 1.12.0
+- Modified principles: none
+- Added sections: Technology Stack — thêm dòng "Ảnh minh hoạ (feature 010)"
+  (Pexels Photos/Videos API) cho feature 010-topic-video-generation. Quyết
+  định từ `/speckit-plan` của feature 010 (xem
+  specs/010-topic-video-generation/research.md §4, plan.md § Constitution
+  Check) — dòng thứ 2 cần amend cho feature này, sau HyperFrames (v1.11.0).
+- Removed sections: none
+- Templates requiring updates: ✅ không template nào cần đổi (thêm 1 dòng
+  công nghệ, không đổi cấu trúc plan/spec/tasks template)
+- Follow-up TODOs: none
+
+Sync Impact Report (1.10.0 → 1.11.0, giữ lại để tra cứu)
+- Modified principles: I. Python-Only Stack (Backend & Pipeline) — thêm ngoại
+  lệ tường minh #2: bước RENDER VIDEO CUỐI của feature 010-topic-video-generation
+  được phép gọi HyperFrames (Node.js runtime + Chrome headless) qua subprocess,
+  giống cách gọi ffmpeg hiện tại — ngoại lệ CHỈ giới hạn ở bước render đó, mọi
+  logic khác (script, search web, tìm ảnh, TTS, sinh HTML timeline) vẫn MUST
+  Python. Quyết định từ `/speckit-clarify` của feature 010 (xem
+  specs/010-topic-video-generation/spec.md § Clarifications) — người dùng chọn
+  "amend constitution" thay vì bỏ HyperFrames hoặc lách luật coi nó là "chỉ 1
+  tool".
+- Added sections: Technology Stack — thêm dòng "Dựng video từ chủ đề (feature
+  010)" (HyperFrames, ngoại lệ Principle I)
+- Removed sections: none
+- Templates requiring updates: ✅ plan-template.md/spec-template.md/tasks-template.md
+  không cần đổi (Constitution Check gate đã generic, không hardcode nội dung
+  Principle I)
+- Follow-up TODOs: khi lập plan.md cho feature 010, MUST trích dẫn đúng ngoại
+  lệ này ở mục Constitution Check, không tự diễn giải lại phạm vi ngoại lệ
+
+Sync Impact Report (1.9.0 → 1.10.0, giữ lại để tra cứu)
 - Modified principles: VI. Agentic Harness Discipline — thêm quy tắc: code xử
   lý media MUST chỉ dựa vào bộ lọc LÕI của ffmpeg, cấm phụ thuộc
   `subtitles`/`ass` (cần libass) và `drawtext` (cần libfreetype)
@@ -55,12 +86,26 @@ runtime logic ở tầng backend/pipeline. Rationale: các model AI cốt lõi (
 video inpainting) đều native Python/PyTorch; một stack duy nhất giảm chi phí bảo
 trì và tránh phải viết sidecar/bridge giữa 2 runtime.
 
-Ngoại lệ tường minh: frontend web UI — chạy trong trình duyệt người dùng, không
+Ngoại lệ tường minh #1: frontend web UI — chạy trong trình duyệt người dùng, không
 phải runtime của pipeline — được phép dùng ReactJS (xem Technology Stack).
 Node.js/npm ở tầng này chỉ là build-time tooling để biên dịch React thành static
 JS/HTML/CSS, không phải runtime xử lý media/pipeline, nên không vi phạm tinh
 thần nguyên tắc này. Backend phục vụ frontend (API, orchestration) vẫn MUST là
 Python.
+
+Ngoại lệ tường minh #2 (feature 010-topic-video-generation): bước RENDER VIDEO
+CUỐI CÙNG của pipeline "tạo video từ chủ đề" được phép gọi HyperFrames — renderer
+HTML→MP4 mã nguồn mở, chạy Node.js 22+ + Chrome headless — qua subprocess, đúng
+cách pipeline hiện tại đã gọi `ffmpeg` (external tool qua subprocess, không viết
+business logic bằng JS). Phạm vi ngoại lệ CHỈ giới hạn ở bước render này — mọi
+logic khác của feature 010 (viết kịch bản, tra cứu web, tìm ảnh, TTS, sinh HTML
+timeline từ dữ liệu scene) vẫn MUST là Python. Rationale: người dùng yêu cầu cụ
+thể dùng HyperFrames (quyết định chốt ở `/speckit-clarify` của feature 010) —
+đây là renderer HTML→video deterministic (animation CSS/GSAP, Chrome headless
+render frame-chính-xác) không có tương đương thuần Python đủ tốt cho nhu cầu
+này; viết lại 1 renderer riêng bằng Python tốn công lớn hơn nhiều so với lợi
+ích giữ 100% Python. Ngoại lệ này KHÔNG tự động áp dụng cho feature khác — bất
+kỳ nhu cầu dùng thêm Node.js runtime nào ngoài phạm vi này MUST tự amend riêng.
 
 ### II. Source-First, Fallback-Ready Downloading
 Douyin và TikTok là nguồn ưu tiên hàng đầu. Download MUST dùng f2 (Johnserf-Seed)
@@ -152,6 +197,8 @@ rõ ràng thay vì tin tưởng agent tự giác.
 | Web UI Backend | FastAPI (Python) | Expose API cho React frontend: submit job, poll trạng thái/% tiến trình, danh sách job, resume job lỗi (feature 002-web-ui). Gọi lại các module pipeline hiện có, không viết lại logic xử lý media |
 | Web UI Frontend | ReactJS | Chạy trong browser, gọi Web UI Backend qua HTTP. Node.js/npm chỉ là build-time tooling (xem Principle I), không phải runtime pipeline |
 | Đăng bài lên nền tảng | Zernio (`https://zernio.com/api/v1`) | Dịch vụ trung gian đã được TikTok/YouTube cấp phép đăng bài tự động — dùng cho CẢ luồng OAuth liên kết kênh LẪN đăng video công khai ngay (feature 006-publish-video-tab). Hệ thống này KHÔNG tự xin audit riêng với từng nền tảng và KHÔNG dùng browser automation/giả lập thao tác tay (FR-012). Gọi qua REST bằng `httpx`, xác thực `Authorization: Bearer $ZERNIO_API_KEY` — key riêng của người dùng, đọc từ `.env` (xem `.env.example`). Thiếu key: chỉ tab "Đăng video" báo chưa cấu hình, pipeline xử lý media KHÔNG bị ảnh hưởng. Kỷ luật gọi thật/mock: xem Principle VI |
+| Dựng video từ chủ đề (feature 010) | HyperFrames (`github.com/heygen-com/hyperframes`) | Renderer HTML→MP4 mã nguồn mở, chạy Node.js 22+ + Chrome headless, gọi qua subprocess (`npx hyperframes render`) — xem Principle I, Ngoại lệ #2. CHỈ dùng ở bước render video cuối cùng: input là HTML timeline (sinh từ scene JSON bằng code Python, template cố định) + ảnh/audio đã có sẵn trong job_dir; output là 1 file MP4. Toàn bộ phần viết kịch bản/tra cứu web/tìm ảnh/TTS trước đó vẫn Python thuần. Yêu cầu môi trường chạy pipeline phải có sẵn Node.js 22+ ngoài Python venv |
+| Ảnh minh hoạ (feature 010) | Pexels Photos/Videos API (`https://api.pexels.com/v1`) | Kho ảnh/video stock miễn phí — search theo `image_query` (tiếng Anh) do LLM sinh cho từng scene, lấy kết quả xếp hạng đầu phù hợp tỉ lệ dọc. Gọi qua `httpx` (đã có sẵn trong `requirements.txt`), xác thực header `Authorization: {PEXELS_API_KEY}` — key riêng của người dùng, đọc từ `.env`. Free tier: 200 request/giờ, 20.000/tháng. Không tìm được ảnh phù hợp → dùng ảnh fallback theo từ khoá rút gọn, rồi ảnh nền trung tính có sẵn trong repo làm phương án cuối (không để scene thiếu ảnh — FR-010) |
 
 Thay đổi bất kỳ dòng nào trong bảng này MUST đi qua amend constitution (Governance),
 không được đổi ngầm trong plan.md của từng feature.
@@ -189,4 +236,4 @@ Versioning theo semver: MAJOR khi đổi framework nền tảng (vd đổi ngôn
 Python); MINOR khi thêm/đổi 1 công nghệ trong bảng Technology Stack hoặc thêm
 principle mới; PATCH khi chỉnh sửa câu chữ/làm rõ nghĩa không đổi quy tắc.
 
-**Version**: 1.10.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-30
+**Version**: 1.12.0 | **Ratified**: 2026-07-25 | **Last Amended**: 2026-07-31

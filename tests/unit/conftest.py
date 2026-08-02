@@ -14,17 +14,23 @@ from pathlib import Path
 
 import pytest
 
+from pipeline import read_job
+from pipeline import _write_job as write_job
+
 
 @pytest.fixture()
 def tmp_jobs_dir(tmp_path, monkeypatch) -> Path:
-    """Trỏ JOBS_DIR (cả pipeline lẫn backend) sang tmp_path/jobs."""
+    """Trỏ JOBS_DIR (pipeline, backend, và generate_pipeline — 010) sang tmp_path/jobs."""
+    import generate_pipeline
     import pipeline
-    from web.backend import jobs_api
+    from web.backend import generate_jobs_api, jobs_api
 
     jobs_dir = tmp_path / "jobs"
     jobs_dir.mkdir()
     monkeypatch.setattr(pipeline, "JOBS_DIR", jobs_dir)
     monkeypatch.setattr(jobs_api, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(generate_pipeline, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(generate_jobs_api, "JOBS_DIR", jobs_dir)
     return jobs_dir
 
 
@@ -55,6 +61,7 @@ def make_job(tmp_jobs_dir):
         transcript_segments: list[dict] | None = None,
         reviewed_segments: list[dict] | None = None,
         script_segments: list[dict] | None = None,
+        scene_items: list[dict] | None = None,
         extra: dict | None = None,
     ) -> dict:
         job = pipeline.create_job(
@@ -98,6 +105,17 @@ def make_job(tmp_jobs_dir):
             )
             job["artifacts"]["script"] = str(path)
 
+        # 010-topic-video-generation: scenes.json — payload chốt GATE_OUTLINE
+        # (data-model.md §3). Không dùng pipeline.create_job() cho job_type=
+        # "generate" thật (đó là generate_pipeline.create_generate_job(), test
+        # riêng ở test_generate_pipeline.py) — ở đây chỉ cần đủ hình dạng
+        # artifacts.scenes để test review/gates.py, gate không quan tâm
+        # job_type.
+        if scene_items is not None:
+            path = job_dir / "scenes.json"
+            _write(path, {"source": "outline.json", "scenes": scene_items})
+            job["artifacts"]["scenes"] = str(path)
+
         job["status"] = status
         job["review_gate"] = review_gate
         if review_gates is not None:
@@ -107,6 +125,49 @@ def make_job(tmp_jobs_dir):
 
         pipeline._write_job(job_id, job)
         return pipeline.read_job(job_id)
+
+    return _make
+
+
+@pytest.fixture()
+def make_generate_job(tmp_jobs_dir):
+    """
+    Tạo jobs/{job_id}/job.json cho job_type="generate" (010-topic-video-
+    generation) qua generate_pipeline.create_generate_job(), rồi cho phép ghi
+    đè status/artifacts/scenes để dựng fixture cho từng bước pipeline.
+    """
+    import generate_pipeline
+
+    def _make(
+        job_id: str = "job-gen-test-001",
+        *,
+        topic: str = "chủ đề thử nghiệm",
+        status: str = "pending",
+        supervised: bool = False,
+        review_gate: str | None = None,
+        review_gates: dict | None = None,
+        scene_items: list[dict] | None = None,
+        extra: dict | None = None,
+    ) -> dict:
+        job = generate_pipeline.create_generate_job(topic, job_id=job_id, supervised=supervised)
+        job_dir = tmp_jobs_dir / job_id
+
+        if scene_items is not None:
+            path = job_dir / "scenes.json"
+            _write(path, {"source": "outline.json", "scenes": scene_items})
+            job["artifacts"]["scenes"] = str(path)
+            job["artifacts"]["outline"] = str(job_dir / "outline.json")
+            _write(path.parent / "outline.json", {"topic": topic, "search_used": False, "sections": []})
+
+        job["status"] = status
+        job["review_gate"] = review_gate
+        if review_gates is not None:
+            job["review_gates"] = review_gates
+        if extra:
+            job.update(extra)
+
+        write_job(job_id, job)
+        return read_job(job_id)
 
     return _make
 
@@ -156,5 +217,27 @@ SCRIPT_SEGMENTS = [
         "end": 1.94,
         "source_text": "if I give you this camera,",
         "translated_text": "nếu tôi đưa anh máy ảnh này,",
+    },
+]
+
+# 010-topic-video-generation: mẫu scenes.json.scenes[] (data-model.md §3) —
+# image_path/voice_path/duration còn null vì chưa qua bước sourcing_assets/
+# synthesizing khi job đang dừng ở GATE_OUTLINE.
+SCENE_ITEMS = [
+    {
+        "index": 0,
+        "narration_text": "Tiền tệ đã tồn tại hàng nghìn năm.",
+        "image_query": "ancient coins currency history",
+        "image_path": None,
+        "voice_path": None,
+        "duration": None,
+    },
+    {
+        "index": 1,
+        "narration_text": "Ngày nay tiền pháp định thống trị hệ thống tài chính.",
+        "image_query": "modern banknotes finance",
+        "image_path": None,
+        "voice_path": None,
+        "duration": None,
     },
 ]

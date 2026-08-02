@@ -27,18 +27,35 @@ from pathlib import Path
 
 GATE_TRANSCRIPT = "transcript"
 GATE_SCRIPT = "script"
-GATES = (GATE_TRANSCRIPT, GATE_SCRIPT)
+# 010-topic-video-generation: chốt outline/scene của luồng "generate" — tái
+# dùng NGUYÊN VẸN cơ chế gate chung này thay vì viết review-gate riêng
+# (research.md §7). File payload là scenes.json, KHÔNG phải segments dạng
+# transcript/script.
+GATE_OUTLINE = "outline"
+GATES = (GATE_TRANSCRIPT, GATE_SCRIPT, GATE_OUTLINE)
 
 # Bước pipeline chạy tiếp sau khi duyệt từng chốt (FR-017)
 NEXT_STATUS_AFTER_GATE = {
     GATE_TRANSCRIPT: "scripting",
     GATE_SCRIPT: "synthesizing",
+    GATE_OUTLINE: "sourcing_assets",
 }
 
 # Trường sửa được của từng chốt, theo schema file tương ứng
 EDITABLE_FIELD = {
     GATE_TRANSCRIPT: "text",
     GATE_SCRIPT: "translated_text",
+    GATE_OUTLINE: "narration_text",
+}
+
+# Tên khoá mảng phần tử trong file payload của từng chốt — 2 chốt cũ đều dùng
+# "segments" (transcript_reviewed.json/script.json), nhưng scenes.json (chốt
+# outline) dùng khoá "scenes". build_payload()/save_edits() MUST đọc/ghi theo
+# khoá này thay vì hardcode "segments" (data-model.md §3, research.md §7).
+GATE_ARRAY_KEY = {
+    GATE_TRANSCRIPT: "segments",
+    GATE_SCRIPT: "segments",
+    GATE_OUTLINE: "scenes",
 }
 
 
@@ -112,6 +129,8 @@ def gate_file_path(job: dict, gate: str) -> Path:
         recorded = job.get("artifacts", {}).get("transcript_reviewed")
     elif gate == GATE_SCRIPT:
         recorded = job.get("artifacts", {}).get("script")
+    elif gate == GATE_OUTLINE:
+        recorded = job.get("artifacts", {}).get("scenes")
     else:
         raise GateError(f"Chốt không hợp lệ: {gate}")
 
@@ -135,6 +154,7 @@ def build_payload(job: dict, gate: str) -> dict:
 
     data = _read_json(gate_file_path(job, gate))
     field = EDITABLE_FIELD[gate]
+    array_key = GATE_ARRAY_KEY[gate]
     gate_meta = job.get("review_gates", {}).get(gate, {})
 
     segments = [
@@ -143,10 +163,11 @@ def build_payload(job: dict, gate: str) -> dict:
             "start": seg.get("start"),
             "end": seg.get("end"),
             "text": seg.get(field) or "",
-            # Chỉ chốt kịch bản có câu gốc để đối chiếu (FR-010)
+            # Chỉ chốt kịch bản có câu gốc để đối chiếu (FR-010). Chốt outline
+            # (010) không có khái niệm "câu gốc" — luôn None (contracts/api.md §5).
             "source_text": seg.get("source_text") if gate == GATE_SCRIPT else None,
         }
-        for i, seg in enumerate(data.get("segments", []))
+        for i, seg in enumerate(data.get(array_key, []))
     ]
 
     payload = {
@@ -202,7 +223,8 @@ def save_edits(job: dict, gate: str, edits: list[dict]) -> tuple[int, int]:
 
     path = gate_file_path(job, gate)
     data = _read_json(path)
-    segments = data.get("segments", [])
+    array_key = GATE_ARRAY_KEY[gate]
+    segments = data.get(array_key, [])
     field = EDITABLE_FIELD[gate]
 
     for edit in edits:
@@ -234,7 +256,7 @@ def save_edits(job: dict, gate: str, edits: list[dict]) -> tuple[int, int]:
         # (router_client.py) — nếu không, nội dung cũ còn sót gây nhầm khi debug
         data["content"] = " ".join(seg.get(field) or "" for seg in kept)
 
-    data["segments"] = kept
+    data[array_key] = kept
     _write_json(path, data)
     return len(kept), dropped
 

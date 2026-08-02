@@ -43,6 +43,9 @@ export default function AppShell({ children, narrow = false }: Props) {
             <NavLink to="/" end className="nav-link">
               Tạo job
             </NavLink>
+            <NavLink to="/generate" className="nav-link">
+              Tạo từ chủ đề
+            </NavLink>
             <NavLink to="/jobs" className="nav-link">
               Lịch sử
             </NavLink>

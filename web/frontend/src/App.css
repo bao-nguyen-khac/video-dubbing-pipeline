@@ -10,14 +10,14 @@
   top: 0;
   z-index: 10;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .app-header__inner {
   max-width: 1080px;
   margin: 0 auto;
-  padding: 0.75rem 1.25rem;
+  padding: 0.85rem 1.25rem;
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -37,12 +37,12 @@
 }
 
 .brand__mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
-  background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #38bdf8));
+  background: linear-gradient(140deg, var(--hue-1), var(--hue-2));
   color: #fff;
   flex: none;
 }
@@ -63,15 +63,15 @@
 .app-nav {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.15rem;
   margin-left: auto;
 }
 
 .nav-link {
   padding: 0.4rem 0.75rem;
-  border-radius: var(--radius-full);
-  color: var(--text);
-  font-size: 0.9rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.875rem;
   font-weight: 500;
   transition: background 0.15s, color 0.15s;
 }
@@ -85,6 +85,7 @@
 .nav-link[aria-current="page"] {
   background: var(--accent-soft);
   color: var(--accent);
+  font-weight: 600;
 }
 
 .app-main {
@@ -110,13 +111,15 @@
 /* ── Đầu trang ──────────────────────────────────────────────────────── */
 
 .page-head {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.75rem;
 }
 
 .page-head__lead {
-  margin-top: 0.4rem;
+  margin-top: 0.5rem;
+  max-width: 46rem;
   color: var(--text-muted);
-  font-size: 0.95rem;
+  font-size: 0.98rem;
+  line-height: 1.6;
 }
 
 .back-link {
@@ -139,19 +142,110 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: 1.5rem;
+  padding: 1.75rem;
 }
 
 .card + .card {
   margin-top: 1.25rem;
 }
 
+.card__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 0.9rem;
+}
+
+.card--pinned {
+  background: color-mix(in srgb, var(--hue-3-soft) 55%, var(--surface));
+  border-color: var(--hue-3);
+}
+
+.card--pinned .card__eyebrow {
+  color: var(--hue-3);
+}
+
+.btn--pinned {
+  color: var(--hue-3);
+}
+
 .card__title {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+/* ── Bố cục trang Tạo job: lưới 2 cột, thẻ nào cần full-width thì tự khai báo ─ */
+
+.home-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.home-layout .card {
+  margin-top: 0;
+}
+
+.home-layout__full {
+  grid-column: 1 / -1;
+}
+
+.home-submit {
+  padding-top: 0.25rem;
+}
+
+@media (min-width: 860px) {
+  .home-layout {
+    grid-template-columns: 1.5fr 1fr;
+  }
+}
+
+/* ── Bố cục trang Chi tiết job: nội dung chính + sidebar thông tin dính trần ── */
+
+.detail-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.detail-layout__side .detail-grid {
+  grid-template-columns: 1fr;
+  gap: 1.1rem;
+}
+
+@media (min-width: 900px) {
+  .detail-layout {
+    grid-template-columns: 1fr 320px;
+  }
+
+  .detail-layout__side {
+    position: sticky;
+    top: 5.5rem;
+  }
+}
+
+/* ── Bố cục trang Đăng video: form chính + kênh liên kết bên cạnh ──────── */
+
+.publish-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (min-width: 860px) {
+  .publish-layout {
+    grid-template-columns: 1fr 1.35fr;
+  }
 }
 
 .card__title h2 {
@@ -243,25 +337,47 @@
   height: 0;
 }
 
+.mode-option {
+  --hue: var(--hue-1);
+  --hue-soft: var(--hue-1-soft);
+}
+
+.mode-option:nth-of-type(4n + 2) {
+  --hue: var(--hue-2);
+  --hue-soft: var(--hue-2-soft);
+}
+
+.mode-option:nth-of-type(4n + 3) {
+  --hue: var(--hue-3);
+  --hue-soft: var(--hue-3-soft);
+}
+
+.mode-option:nth-of-type(4n + 4) {
+  --hue: var(--hue-4);
+  --hue-soft: var(--hue-4-soft);
+}
+
 .mode-option__body {
   /* span mặc định là inline — không có block thì border/padding sập méo */
   display: block;
   height: 100%;
-  padding: 0.8rem 0.9rem;
+  padding: 0.8rem 0.9rem 0.8rem 1rem;
   border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--hue);
   border-radius: var(--radius);
   background: var(--surface);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
 .mode-option:hover .mode-option__body {
-  border-color: var(--accent);
+  border-color: var(--hue);
+  border-left-color: var(--hue);
 }
 
 .mode-option input:checked + .mode-option__body {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--hue);
+  background: var(--hue-soft);
+  box-shadow: inset 0 0 0 1px var(--hue);
 }
 
 .mode-option input:focus-visible + .mode-option__body {
@@ -389,14 +505,14 @@
   gap: 0.45rem;
   padding: 0.6rem 1.1rem;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-btn);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.05s, opacity 0.15s;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, opacity 0.15s;
   white-space: nowrap;
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .btn:disabled {
@@ -421,6 +537,15 @@
 
 .btn--ghost:hover:not(:disabled) {
   background: var(--surface-hover);
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, black);
 }
 
 .btn--subtle {
@@ -462,10 +587,12 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.2rem 0.65rem;
+  padding: 0.25rem 0.7rem;
   border-radius: var(--radius-full);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   border: 1px solid transparent;
   white-space: nowrap;
 }
@@ -636,7 +763,7 @@
 .progress__fill {
   height: 100%;
   border-radius: var(--radius-full);
-  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #38bdf8));
+  background: linear-gradient(90deg, var(--hue-1), var(--hue-2));
   transition: width 0.5s ease;
 }
 
@@ -849,14 +976,27 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  box-shadow: none;
+  transition: border-color 0.15s, box-shadow 0.2s;
 }
 
 .job-row:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow);
   text-decoration: none;
+}
+
+.job-row--static {
+  cursor: default;
+}
+
+.job-row--static:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.text-danger {
+  color: var(--danger);
 }
 
 .job-row__url {
@@ -995,10 +1135,89 @@
   margin-bottom: 1.5rem;
 }
 
+.login-head h1 {
+  font-size: 1.6rem;
+  margin-top: 0.85rem;
+}
+
 .login-head p {
   font-size: 0.875rem;
   color: var(--text-muted);
   margin-top: 0.3rem;
+}
+
+/* ── Hộp thoại xác nhận (thay window.confirm) ──────────────────────── */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: color-mix(in srgb, var(--text-strong) 45%, transparent);
+  backdrop-filter: blur(2px);
+  animation: confirm-fade 0.15s ease;
+}
+
+.confirm-dialog {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 1.5rem;
+  animation: confirm-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-dialog__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 0.9rem;
+}
+
+.confirm-dialog__icon--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.confirm-dialog__title {
+  font-weight: 600;
+  color: var(--text-strong);
+  margin-bottom: 0.5rem;
+}
+
+.confirm-dialog__message {
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+@keyframes confirm-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes confirm-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────── */

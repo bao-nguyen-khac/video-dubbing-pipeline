@@ -547,3 +547,72 @@ def test_approve_transcript_gate_400_when_hardsub_box_missing(client, make_job, 
     )
 
     assert res.status_code == 400
+
+
+# ─── 010-topic-video-generation: chốt outline (job_type="generate") ─────────
+#
+# T040: route /review/approve dùng CHUNG cho cả 2 job_type — job "generate"
+# KHÔNG được đi qua update_job_status()/start_job() của luồng dub (VALID_
+# TRANSITIONS không có "sourcing_assets", source_url/script_mode không tồn
+# tại trên job này → sẽ lỗi nếu code vẫn giả định luồng dub).
+
+
+def test_approve_outline_gate_resumes_generate_job(client, make_generate_job, monkeypatch):
+    from web.backend import generate_jobs_api
+
+    started_generate: list[str] = []
+    monkeypatch.setattr(
+        generate_jobs_api, "start_generate_job", lambda job_id: started_generate.append(job_id)
+    )
+
+    job = make_generate_job(
+        job_id="job-gen-review-approve",
+        status="awaiting_review",
+        supervised=True,
+        review_gate="outline",
+        scene_items=[
+            {"index": 0, "narration_text": "Câu 1", "image_query": "q1", "image_path": None, "voice_path": None, "duration": None},
+        ],
+        review_gates={"outline": {"reached_at": "2026-08-01T00:00:00+00:00"}},
+    )
+
+    res = client.post(f"/api/jobs/{job['job_id']}/review/approve", json={"gate": "outline"})
+
+    assert res.status_code == 202
+    assert res.json()["resumed_status"] == "sourcing_assets"
+
+    from pipeline import read_job
+
+    saved = read_job(job["job_id"])
+    assert saved["status"] == "sourcing_assets"
+    assert saved["review_gate"] is None
+    assert saved["review_gates"]["outline"]["approved_at"] is not None
+
+    # Job "generate" phải khởi động qua generate_jobs_api.start_generate_job()
+    # — KHÔNG phải review_api.start_job() (luồng dub, sẽ KeyError vì job này
+    # không có source_url/script_mode)
+    assert started_generate == [job["job_id"]]
+    assert len(client.started) == 0  # type: ignore[attr-defined]
+
+
+def test_approve_outline_gate_twice_only_runs_once(client, make_generate_job, monkeypatch):
+    from web.backend import generate_jobs_api
+
+    monkeypatch.setattr(generate_jobs_api, "start_generate_job", lambda job_id: None)
+
+    job = make_generate_job(
+        job_id="job-gen-review-twice",
+        status="awaiting_review",
+        supervised=True,
+        review_gate="outline",
+        scene_items=[
+            {"index": 0, "narration_text": "Câu 1", "image_query": "q1", "image_path": None, "voice_path": None, "duration": None},
+        ],
+    )
+    url = f"/api/jobs/{job['job_id']}/review/approve"
+
+    first = client.post(url, json={"gate": "outline"})
+    second = client.post(url, json={"gate": "outline"})
+
+    assert first.status_code == 202
+    assert second.status_code == 409

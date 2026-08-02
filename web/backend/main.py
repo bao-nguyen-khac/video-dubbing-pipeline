@@ -19,6 +19,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from web.backend import auth  # noqa: E402
 from web.backend.downloads_api import router as downloads_router  # noqa: E402
+from web.backend.generate_jobs_api import router as generate_jobs_router  # noqa: E402
 from web.backend.jobs_api import router as jobs_router  # noqa: E402
 from web.backend.publish_api import router as publish_router  # noqa: E402
 from web.backend.review_api import router as review_router  # noqa: E402
@@ -84,6 +85,10 @@ app.include_router(jobs_router, prefix="/api/jobs")
 # đúng auth middleware ở trên. Đăng ký SAU jobs_router — route ở đây đều có 2+
 # segment (/{job_id}/review...) nên không che GET /{job_id} của jobs_router.
 app.include_router(review_router, prefix="/api/jobs")
+# 010-topic-video-generation: router RIÊNG cho job_type="generate" — payload/
+# state machine khác hẳn luồng dub (contracts/api.md). Chốt duyệt outline vẫn
+# đi qua review_router ở trên (route /api/jobs/{id}/review đã generic theo gate).
+app.include_router(generate_jobs_router, prefix="/api/generate-jobs")
 app.include_router(voices_router, prefix="/api/voices")
 app.include_router(publish_router, prefix="/api/publish")
 app.include_router(downloads_router, prefix="/api/downloads")

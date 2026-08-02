@@ -330,6 +330,25 @@ Ràng buộc:
 
 Chi tiết: [`specs/007-schedule-publish/`](specs/007-schedule-publish/).
 
+### Tạo video từ chủ đề (feature 010-topic-video-generation)
+
+Tab **Tạo từ chủ đề** trong giao diện web — nhập 1 chủ đề văn bản (không cần
+URL video có sẵn), hệ thống tự viết kịch bản (tự tra cứu web khi cần), tìm ảnh
+minh hoạ qua Pexels, đọc giọng từng đoạn, rồi dựng thành video dọc (9:16) hoàn
+chỉnh. Bật **"Quản lý pipeline"** để dừng lại duyệt/sửa outline và lời thoại
+từng scene trước khi hệ thống tốn chi phí tìm ảnh/đọc giọng/render.
+
+Cần thêm 1 dòng vào `.env` (đăng ký free tại [pexels.com/api](https://www.pexels.com/api/)):
+
+```bash
+PEXELS_API_KEY=...
+```
+
+Bước render cuối gọi `npx hyperframes render` — máy chạy pipeline cần có sẵn
+Node.js 22+ và Chrome headless (Dockerfile đã cài sẵn khi build bằng Docker).
+
+Chi tiết: [`specs/010-topic-video-generation/`](specs/010-topic-video-generation/).
+
 ## Kiểm tra môi trường
 
 ```bash

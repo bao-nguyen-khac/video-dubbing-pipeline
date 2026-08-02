@@ -224,21 +224,37 @@ async def approve_review(job_id: str, body: ApproveRequest):
 
         next_status = gates.NEXT_STATUS_AFTER_GATE[body.gate]
         gates.mark_approved(job, body.gate)
-        write_job(job_id, job)
-        # Đổi status BÊN TRONG lock: từ đây cú phê duyệt thứ hai sẽ thấy status
-        # khác "awaiting_review" và bị `_load_awaiting_job()` từ chối (FR-019).
-        update_job_status(job_id, next_status)
+        # 010-topic-video-generation: job "generate" KHÔNG dùng
+        # update_job_status()/VALID_TRANSITIONS của pipeline.py (luồng dub) —
+        # "sourcing_assets" không nằm trong state machine đó. Ghi status trực
+        # tiếp, giống cách generate_pipeline.py tự quản lý status của nó.
+        is_generate_job = job.get("job_type", "dub") == "generate"
+        if is_generate_job:
+            job["status"] = next_status
+            write_job(job_id, job)
+        else:
+            write_job(job_id, job)
+            # Đổi status BÊN TRONG lock: từ đây cú phê duyệt thứ hai sẽ thấy
+            # status khác "awaiting_review" và bị `_load_awaiting_job()` từ
+            # chối (FR-019).
+            update_job_status(job_id, next_status)
 
-    # start_job() spawn thread nền — gọi NGOÀI lock để không giữ khoá qua I/O
-    start_job(
-        job["source_url"],
-        job["script_mode"],
-        job_id,
-        dynamic_captions=job.get("dynamic_captions", False),
-        tts_provider=job.get("tts_provider", "edge-tts"),
-        voice_id=job.get("voice_id"),
-        supervised=job.get("supervised", True),
-    )
+    # Spawn thread nền NGOÀI lock để không giữ khoá qua I/O — đúng orchestrator
+    # theo job_type (generate_pipeline.py vs pipeline.py, research.md §1).
+    if is_generate_job:
+        from web.backend.generate_jobs_api import start_generate_job
+
+        start_generate_job(job_id)
+    else:
+        start_job(
+            job["source_url"],
+            job["script_mode"],
+            job_id,
+            dynamic_captions=job.get("dynamic_captions", False),
+            tts_provider=job.get("tts_provider", "edge-tts"),
+            voice_id=job.get("voice_id"),
+            supervised=job.get("supervised", True),
+        )
 
     return {"job_id": job_id, "approved_gate": body.gate, "resumed_status": next_status}
 

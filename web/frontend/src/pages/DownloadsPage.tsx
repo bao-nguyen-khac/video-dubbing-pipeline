@@ -62,7 +62,7 @@ export default function DownloadsPage() {
       {videos !== null && videos.length > 0 && (
         <div className="job-list">
           {videos.map((v) => (
-            <div key={v.url} className="job-row" style={{ cursor: "default" }}>
+            <div key={v.url} className="job-row job-row--static">
               <div className="job-row__url" title={v.url}>
                 <a href={v.url} target="_blank" rel="noreferrer">
                   {shortUrl(v.url)}
@@ -75,7 +75,7 @@ export default function DownloadsPage() {
                 {!v.available && (
                   <>
                     <span>·</span>
-                    <span style={{ color: "var(--danger, #c0392b)" }}>file đã mất</span>
+                    <span className="text-danger">file đã mất</span>
                   </>
                 )}
               </div>

@@ -579,23 +579,32 @@ def _reasoning_token_note(response) -> str:
     return f" (trong đó {reasoning}/{completion} token dành cho suy luận nội bộ)"
 
 
-def _chat_completion(system_prompt: str, user_message: str, temperature: float = 0.7) -> str:
+def _chat_completion(
+    system_prompt: str, user_message: str, temperature: float = 0.7, model: str | None = None
+) -> str:
     """
     Gọi 9router (OpenAI-compatible chat completion) — helper dùng chung cho
-    `translate_segments()` (Dịch chuẩn/Phụ đề tự động) và `rewrite_segments()`
-    (Sáng tạo).
+    `translate_segments()` (Dịch chuẩn/Phụ đề tự động), `rewrite_segments()`
+    (Sáng tạo), và `script_gen/topic_script_generator.py` (010-topic-video-
+    generation, dùng model agent riêng qua tham số `model`).
+
+    `model=None` (mặc định, mọi lượt gọi hiện có) giữ NGUYÊN hành vi cũ — dùng
+    `DEFAULT_MODEL` (`ROUTER_MODEL`). Chỉ topic_script_generator.py truyền
+    `model` tường minh (`ROUTER_AGENT_MODEL`) để dùng model agent có tool-use
+    khác hẳn model dịch/viết lại (research.md §3 của feature 010).
 
     Nếu 9router lỗi (timeout, connection refused, HTTP lỗi, kết quả rỗng) và
     .env có OPENROUTER_API_KEY thì tự động gọi lại qua OpenRouter thay vì làm
     hỏng cả job — cùng giao thức OpenAI-compatible nên kết quả trả về giữ
-    nguyên định dạng, phần parse phía sau không đổi.
+    nguyên định dạng, phần parse phía sau không đổi. Fallback OpenRouter LUÔN
+    dùng `OPENROUTER_MODEL` (không có khái niệm "agent model" bên OpenRouter).
 
     Raises:
         RuntimeError: Nếu 9router lỗi và không có (hoặc cũng lỗi nốt) fallback.
     """
     try:
         return _call_chat_api(
-            ROUTER_BASE_URL, ROUTER_API_KEY, DEFAULT_MODEL,
+            ROUTER_BASE_URL, ROUTER_API_KEY, model or DEFAULT_MODEL,
             system_prompt, user_message, temperature,
         )
     except TruncatedResponseError:

@@ -19,9 +19,10 @@ import {
 } from "../api/client";
 import Callout from "../components/Callout";
 import { REVIEW_GATE_LABELS } from "../lib/labels";
+import { confirm } from "../lib/confirm";
 
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "--:--";
+function formatTime(seconds: number | null): string {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return "--:--";
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
@@ -184,14 +185,15 @@ export default function ReviewGatePanel({
   async function handleApprove() {
     if (!payload) return;
     // FR-015: cảnh báo TRƯỚC, không âm thầm duyệt theo nội dung cũ
-    if (
-      dirty &&
-      !window.confirm(
-        "Bạn còn thay đổi chưa lưu. Phê duyệt sẽ dùng nội dung ĐÃ LƯU và bỏ " +
-          "phần đang sửa. Tiếp tục?",
-      )
-    ) {
-      return;
+    if (dirty) {
+      const ok = await confirm({
+        title: "Còn thay đổi chưa lưu",
+        message:
+          "Phê duyệt sẽ dùng nội dung ĐÃ LƯU và bỏ phần đang sửa.",
+        confirmLabel: "Phê duyệt",
+        tone: "danger",
+      });
+      if (!ok) return;
     }
     setError(null);
     setNotice(null);
@@ -213,14 +215,14 @@ export default function ReviewGatePanel({
   async function handleRegenerate() {
     if (!payload) return;
     // FR-020 / US4-2: cảnh báo ghi đè TRƯỚC khi gọi API
-    if (
-      !window.confirm(
-        "Sinh lại kịch bản từ lời thoại đã duyệt. MỌI phần sửa tay ở chốt này " +
-          "sẽ bị ghi đè. Tiếp tục?",
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Sinh lại kịch bản?",
+      message:
+        "Sinh lại kịch bản từ lời thoại đã duyệt. MỌI phần sửa tay ở chốt này sẽ bị ghi đè.",
+      confirmLabel: "Sinh lại",
+      tone: "danger",
+    });
+    if (!ok) return;
     setError(null);
     setNotice(null);
     setBusy("regenerate");
@@ -258,10 +260,14 @@ export default function ReviewGatePanel({
       </div>
 
       <p className="page-head__lead">
-        {payload.gate === "transcript"
-          ? "Sửa lại những câu bị nghe sai (tên riêng, thuật ngữ) rồi phê duyệt. Các bước sau sẽ dùng đúng nội dung đã lưu."
-          : "Đối chiếu với câu gốc, sửa chỗ dịch chưa mượt rồi phê duyệt. Giọng đọc/phụ đề sẽ theo đúng nội dung đã lưu."}
-        {" Xoá trắng một câu = bỏ câu đó. Mốc thời gian chỉ để xem."}
+        {payload.gate === "transcript" &&
+          "Sửa lại những câu bị nghe sai (tên riêng, thuật ngữ) rồi phê duyệt. Các bước sau sẽ dùng đúng nội dung đã lưu."}
+        {payload.gate === "script" &&
+          "Đối chiếu với câu gốc, sửa chỗ dịch chưa mượt rồi phê duyệt. Giọng đọc/phụ đề sẽ theo đúng nội dung đã lưu."}
+        {payload.gate === "outline" &&
+          "Sửa lại lời thoại từng scene trước khi hệ thống tìm ảnh minh hoạ và đọc giọng — các bước sau tốn thời gian/chi phí nên sửa kỹ ở đây trước."}
+        {" Xoá trắng một câu = bỏ câu đó."}
+        {payload.gate !== "outline" && " Mốc thời gian chỉ để xem."}
       </p>
 
       {error && (
@@ -356,9 +362,13 @@ export default function ReviewGatePanel({
         <div className="review-list">
           {payload.segments.map((seg) => (
             <div className="review-row" key={seg.index}>
-              <div className="review-row__time mono" title="Mốc thời gian (chỉ để xem)">
-                {formatTime(seg.start)} – {formatTime(seg.end)}
-              </div>
+              {/* contracts/api.md §5: chốt outline chưa có timing thật
+                  (start/end null) — không hiển thị cột thời gian */}
+              {payload.gate !== "outline" && (
+                <div className="review-row__time mono" title="Mốc thời gian (chỉ để xem)">
+                  {formatTime(seg.start)} – {formatTime(seg.end)}
+                </div>
+              )}
               <div className="review-row__body">
                 {hasSource && (
                   <div className="review-row__source">{seg.source_text ?? ""}</div>

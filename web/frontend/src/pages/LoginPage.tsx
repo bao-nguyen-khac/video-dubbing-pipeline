@@ -37,7 +37,7 @@ export default function LoginPage() {
               <span>Video Dubbing</span>
             </span>
           </span>
-          <h1 style={{ fontSize: "1.35rem", marginTop: "0.75rem" }}>Đăng nhập</h1>
+          <h1>Đăng nhập</h1>
           <p>Dùng tài khoản cấu hình trong .env của máy chủ.</p>
         </div>
 

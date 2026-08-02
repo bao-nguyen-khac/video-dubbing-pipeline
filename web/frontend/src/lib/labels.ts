@@ -69,12 +69,29 @@ export const STATUS_LABELS: Record<string, string> = {
   awaiting_review: "Chờ duyệt",
   done: "Hoàn tất",
   failed: "Thất bại",
+  // 010-topic-video-generation: trạng thái riêng của luồng "generate" — 3 giá
+  // trị pending/awaiting_review/done/failed đã dùng chung ở trên
+  outlining: "Đang lên outline",
+  sourcing_assets: "Đang tìm ảnh minh hoạ",
+  rendering: "Đang dựng video",
+};
+
+// 010-topic-video-generation: nhãn ngắn (dạng danh từ) cho dropdown "Chạy lại
+// từ bước" của GenerateVideoPage — cùng tinh thần STAGES bên dub nhưng thứ tự
+// bước khác hẳn (không có download/transcribe/merge)
+export const GENERATE_STEP_LABELS: Record<string, string> = {
+  scripting: "Kịch bản (outline + lời thoại)",
+  sourcing_assets: "Tìm ảnh minh hoạ",
+  synthesizing: "Giọng đọc",
+  rendering: "Dựng video",
 };
 
 // 008-supervised-pipeline: tên chốt hiển thị cho người dùng
 export const REVIEW_GATE_LABELS: Record<string, string> = {
   transcript: "chốt lời thoại",
   script: "chốt kịch bản",
+  // 010-topic-video-generation
+  outline: "chốt outline",
 };
 
 export type StatusKind = "running" | "waiting" | "done" | "failed";

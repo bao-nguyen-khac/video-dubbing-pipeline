@@ -55,7 +55,13 @@ def _error(status_code: int, message: str, **extra) -> JSONResponse:
 
 
 def _iter_all_jobs():
-    """Yield job dict cho mỗi jobs/*/job.json đọc được (bỏ qua file hỏng/thiếu)."""
+    """Yield job dict cho mỗi jobs/*/job.json đọc được (bỏ qua file hỏng/thiếu).
+
+    Trả về CẢ job dub lẫn job "generate" (010-topic-video-generation) — dùng
+    cho `find_running_job_id()` (2 loại job CÙNG 1 hàng đợi, research.md §1
+    của feature 010). Endpoint nào chỉ phục vụ luồng dub (list/detail/output/
+    retry/rerun/pin/delete) MUST tự lọc bằng `_is_dub_job()`, KHÔNG lọc ở đây.
+    """
     if not JOBS_DIR.exists():
         return
     for job_dir in sorted(JOBS_DIR.iterdir()):
@@ -69,6 +75,12 @@ def _iter_all_jobs():
                 yield json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
+
+
+def _is_dub_job(job: dict) -> bool:
+    """job.json vắng mặt `job_type` MẶC ĐỊNH là luồng dub (data-model.md §1
+    của feature 010) — job cũ tạo trước feature đó không có field này."""
+    return job.get("job_type", "dub") == "dub"
 
 
 def find_running_job_id() -> str | None:
@@ -260,8 +272,14 @@ async def submit_job(body: SubmitJobRequest):
 
 @router.get("")
 async def list_jobs():
-    """GET /api/jobs — danh sách Job Summary, mới nhất trước (US2, data-model.md)."""
-    jobs = [_job_to_summary(job) for job in _iter_all_jobs()]
+    """GET /api/jobs — danh sách Job Summary, mới nhất trước (US2, data-model.md).
+
+    CHỈ job dub — job "generate" (010-topic-video-generation) có danh sách
+    riêng ở `GET /api/generate-jobs` (payload khác hẳn, không có source_url/
+    platform). Trộn 2 danh sách thành 1 view duy nhất là việc của frontend,
+    chưa làm ở bản này.
+    """
+    jobs = [_job_to_summary(job) for job in _iter_all_jobs() if _is_dub_job(job)]
     jobs.sort(key=lambda j: j["created_at"], reverse=True)
     return {"jobs": jobs}
 
@@ -273,6 +291,8 @@ async def get_job(job_id: str):
         job = read_job(job_id)
     except FileNotFoundError:
         return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
+        return _error(404, "Job không tồn tại")
     return _job_to_detail(job)
 
 
@@ -282,6 +302,8 @@ async def get_job_output(job_id: str):
     try:
         job = read_job(job_id)
     except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
         return _error(404, "Job không tồn tại")
 
     output_path = _get_output_video_path(job)
@@ -301,6 +323,8 @@ async def get_job_source(job_id: str):
         job = read_job(job_id)
     except FileNotFoundError:
         return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
+        return _error(404, "Job không tồn tại")
 
     source_path = _get_source_video_path(job)
     if not source_path:
@@ -317,8 +341,10 @@ async def get_hardsub_frame(job_id: str):
     người dùng khoanh tay, không còn OCR tự động).
     """
     try:
-        read_job(job_id)
+        job = read_job(job_id)
     except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
         return _error(404, "Job không tồn tại")
 
     frame_path = JOBS_DIR / job_id / "hardsub_frame.png"
@@ -340,6 +366,8 @@ async def retry_job(job_id: str):
     try:
         job = read_job(job_id)
     except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
         return _error(404, "Job không tồn tại")
 
     if job["status"] != "failed":
@@ -396,6 +424,8 @@ async def rerun_job_from_step(job_id: str, body: RerunFromStepRequest):
     try:
         job = read_job(job_id)
     except FileNotFoundError:
+        return _error(404, "Job không tồn tại")
+    if not _is_dub_job(job):
         return _error(404, "Job không tồn tại")
 
     # Chỉ an toàn khi job KHÔNG có thread nào đang thực sự xử lý nó — done/

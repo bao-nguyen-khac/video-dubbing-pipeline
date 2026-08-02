@@ -22,6 +22,16 @@ def _base_url() -> str:
     return os.environ.get("OMNIVOICE_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
+def _headers() -> dict:
+    """
+    X-API-Key khi service chạy public (vd tunnel Colab/Kaggle) và
+    OMNIVOICE_API_KEY được set khớp phía service. Service local không set
+    OMNIVOICE_API_KEY thì gọi bình thường, không cần header này.
+    """
+    api_key = os.environ.get("OMNIVOICE_API_KEY")
+    return {"X-API-Key": api_key} if api_key else {}
+
+
 def list_voices() -> list[dict]:
     """
     Danh sách giọng đã nạp vào OmniVoice service (voice-clone profile).
@@ -32,7 +42,7 @@ def list_voices() -> list[dict]:
     """
     import httpx
 
-    response = httpx.get(f"{_base_url()}/voices", timeout=10.0)
+    response = httpx.get(f"{_base_url()}/voices", headers=_headers(), timeout=10.0)
     response.raise_for_status()
     items = response.json().get("voices", [])
     return [{"voice_id": v["voice_id"], "name": v["name"]} for v in items]
@@ -47,7 +57,7 @@ def is_available(timeout: float = 3.0) -> bool:
     import httpx
 
     try:
-        response = httpx.get(f"{_base_url()}/health", timeout=timeout)
+        response = httpx.get(f"{_base_url()}/health", headers=_headers(), timeout=timeout)
         return response.status_code < 500
     except httpx.HTTPError:
         return False
@@ -71,6 +81,7 @@ def synthesize_text(text: str, voice_id: str, output_path: str | Path) -> Path:
         response = httpx.post(
             f"{_base_url()}/synthesize",
             json={"text": text, "voice_id": voice_id},
+            headers=_headers(),
             timeout=300.0,  # inference trên M1/MPS chậm (RTF ~8x), cho biên rộng
         )
         response.raise_for_status()

@@ -130,14 +130,18 @@ export function submitJob(
 
 // ── Chốt kiểm duyệt (008-supervised-pipeline) ───────────────────────────────
 
-export type ReviewGate = "transcript" | "script";
+export type ReviewGate = "transcript" | "script" | "outline";
 
 export interface ReviewSegment {
   /** 0-based, là KHOÁ định danh khi lưu — không dùng mốc thời gian làm khoá */
   index: number;
-  /** Mốc thời gian chỉ để xem, không sửa được ở v1 (FR-016) */
-  start: number;
-  end: number;
+  /**
+   * Mốc thời gian chỉ để xem, không sửa được ở v1 (FR-016). `null` ở chốt
+   * outline (010-topic-video-generation) — scene chưa có timing thật tới
+   * bước synthesizing (contracts/api.md §5), client không hiển thị.
+   */
+  start: number | null;
+  end: number | null;
   /** Nội dung sửa được (chốt kịch bản: đây là bản dịch) */
   text: string;
   /** Câu gốc để đối chiếu — chỉ có ở chốt kịch bản (FR-010) */
@@ -156,7 +160,7 @@ export interface HardsubBox {
 export interface ReviewPayload {
   job_id: string;
   gate: ReviewGate;
-  editable_field: "text" | "translated_text";
+  editable_field: "text" | "translated_text" | "narration_text";
   edited: boolean;
   can_regenerate: boolean;
   reached_at: string | null;
@@ -293,6 +297,105 @@ export function sourceUrl(jobId: string) {
 
 export function listVoices() {
   return request<{ voices: Voice[] }>("/api/voices");
+}
+
+// ── Tạo video từ chủ đề (010-topic-video-generation) ────────────────────────
+
+export type GenerateStatus =
+  | "pending"
+  | "outlining"
+  | "scripting"
+  | "awaiting_review"
+  | "sourcing_assets"
+  | "synthesizing"
+  | "rendering"
+  | "done"
+  | "failed";
+
+export interface GenerateJobSummary {
+  job_id: string;
+  job_type: "generate";
+  topic: string;
+  status: GenerateStatus;
+  progress_percent: number;
+  created_at: string;
+  review_gate: "outline" | null;
+}
+
+export interface GenerateScene {
+  index: number;
+  narration_text: string;
+}
+
+export interface GenerateJobDetail extends GenerateJobSummary {
+  supervised: boolean;
+  tts_provider: string;
+  voice_id: string | null;
+  error: string | null;
+  scenes: GenerateScene[];
+  review_url: string | null;
+  output_video_url: string | null;
+  can_retry: boolean;
+}
+
+export function submitGenerateJob(
+  topic: string,
+  supervised: boolean = false,
+  ttsProvider?: string,
+  voiceId?: string,
+) {
+  return request<{ job_id: string }>("/api/generate-jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      topic,
+      supervised,
+      ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
+      ...(voiceId ? { voice_id: voiceId } : {}),
+    }),
+  });
+}
+
+export function getGenerateJob(jobId: string) {
+  return request<GenerateJobDetail>(`/api/generate-jobs/${jobId}`);
+}
+
+export function listGenerateJobs() {
+  return request<{ jobs: GenerateJobSummary[] }>("/api/generate-jobs");
+}
+
+export function generateOutputUrl(jobId: string) {
+  return `/api/generate-jobs/${jobId}/output`;
+}
+
+export function retryGenerateJob(jobId: string) {
+  return request<{ job_id: string }>(`/api/generate-jobs/${jobId}/retry`, { method: "POST" });
+}
+
+// 010: quay lại 1 bước trước đó (cho phép cả job "done" lẫn "failed"), khác
+// /retry chỉ dành cho job failed — cùng tinh thần RERUN_STEPS của luồng dub
+export const GENERATE_RERUN_STEPS = [
+  "scripting",
+  "sourcing_assets",
+  "synthesizing",
+  "rendering",
+] as const;
+export type GenerateRerunStep = (typeof GENERATE_RERUN_STEPS)[number];
+
+export function rerunGenerateFromStep(
+  jobId: string,
+  step: GenerateRerunStep,
+  voice?: { ttsProvider: string; voiceId: string },
+) {
+  return request<{ job_id: string; resumed_status: string }>(
+    `/api/generate-jobs/${jobId}/rerun-from`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        step,
+        ...(voice ? { tts_provider: voice.ttsProvider, voice_id: voice.voiceId } : {}),
+      }),
+    },
+  );
 }
 
 // ── Đăng video (006-publish-video-tab) ──────────────────────────────────────
