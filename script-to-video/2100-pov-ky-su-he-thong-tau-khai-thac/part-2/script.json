@@ -1,0 +1,143 @@
+{
+  "part_index": 1,
+  "title": "Override",
+  "role": "Twist + Kết",
+  "screens": [
+    {
+      "index": 0,
+      "duration_seconds": 6,
+      "role_label": "Tiếp cliffhanger — nghiêng vào, bắt đầu xử lý",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Tiếp **P1 S10** — cùng cận mặt + tay đang hover override (KHÔNG chạy từ chỗ khác tới console).\n- **END STATE:** Tay đã chạm tile đỏ Unit 7, chuẩn bị kéo isolate — S2 mở động tác kéo.\n\n## Nhịp trong clip\n- **0–3s:** Giữ hover; mắt sắc; nghiêng vào panel.\n- **3–6s:** Hạ tay xuống chạm tile đỏ; end ngón tay trên tile.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create a 6-second shot, 50mm lens. Continuing directly from the previous part's final freeze — blonde Erik already at the main console with his left hand hovering over the remote-override cluster and amber-red alert on the Unit 7 tile: From 0-3 seconds: hold that close medium, his eyes harden, he leans a fraction closer; do not show him walking or running to the console. From 3-6 seconds: his hand lowers from the hover and touches the amber-red robot tile, fingers ready to drag it; end frozen with contact on that tile for the isolation move next. Ambient noise: alarm undercurrent under cabin fans. SFX: sharp alert chirp continuing. Dialogue: None.",
+      "vi_voiceover_text": "Unit 7 vẫn kẹt. Tôi không chờ thêm.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 1,
+      "duration_seconds": 8,
+      "role_label": "Isolate Unit 7 khỏi đàn",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Tiếp S1 — ngón tay đã trên tile đỏ, kéo tách.\n- **END STATE:** Tile đã tách; đang nhìn feed Unit 7 đóng băng — S3 zoom khớp.\n\n## Nhịp trong clip\n- **0–4s:** Kéo tile đỏ khỏi swarm cyan.\n- **4–8s:** Nhìn feed đóng băng; end eyeline vào feed.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create an 8-second locked-off medium shot, 50mm lens. Continuing from his fingers already on the amber-red tile: From 0-4 seconds: blonde Erik drags that tile away from the cyan swarm cluster — abstract shapes only, no readable text — fast but controlled. From 4-8 seconds: he looks to the matching feed where the mining robot remains frozen mid-drill with a stuck arm while neighboring feeds stay cyan, Vega light pulsing; end frozen with clear eyeline into that Unit 7 feed for the diagnostic zoom next. Ambient noise: tense cabin fans. SFX: isolation click, short confirm blip. Dialogue: None.",
+      "vi_voiceover_text": "Cắt nó khỏi đàn trước. Cô lập — rồi mới đụng khớp hỏng.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 2,
+      "duration_seconds": 8,
+      "role_label": "Chẩn đoán khớp trên feed",
+      "ingredients_used": "Mining robot · Cabin robot-ops · Erik",
+      "prompt_detail_md": "## Handoff\n- **START:** Eyeline-match từ S2 vào feed Unit 7.\n- **END STATE:** Cận khớp + Erik nghiêng mép khung — S4 pull-back ra tay override stick.\n\n## Nhịp trong clip\n- **0–4s:** Push vào khớp kẹt.\n- **4–8s:** Overlay vạch đo; end Erik nghiêng nhìn.",
+      "visual_prompt": "Using the provided images for the mining robot, the robot-ops cabin, and Erik, create an 8-second magnified cabin-feed shot, 50mm lens. Continuing as an eyeline match into the Unit 7 feed: From 0-4 seconds: push into the mining robot's stuck drill-arm joint locked at a bad angle on asteroid rock, fault lights blinking, dirty metal and amber stripe clear. From 4-8 seconds: abstract cyan-and-amber measurement ticks overlay the joint with no numbers and no readable text while blonde Erik leans in at the frame edge; end frozen on the joint close-up with Erik at the edge so the next shot can pull back to his hands on the override stick. Ambient noise: harsh close servo whine through speakers. SFX: soft analysis ticks. Dialogue: None.",
+      "vi_voiceover_text": "Khớp khoan khóa cứng ở góc xấu. Cứ giật mạnh là gãy cả cánh.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 3,
+      "duration_seconds": 10,
+      "role_label": "Override lần 1 — điều khiển tay",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Pull-back từ cận khớp S3 → OTS tay + feed cùng sự cố.\n- **END STATE:** Đang giữ lực, arm run trên feed — S5 tiếp tục cùng feed (nhúc/khóa).\n\n## Nhịp trong clip\n- **0–4s:** Tay nắm stick, feed nửa khung.\n- **4–7s:** Đẩy chậm, arm nhích.\n- **7–10s:** Giữ lực; end chưa thả.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create a 10-second close over-shoulder shot, 50mm lens. Continuing by pulling back from the joint close-up to Erik's hands: From 0-4 seconds: blonde Erik grips a remote-override stick while a large Unit 7 feed fills half the frame showing the stuck mining-robot arm. From 4-7 seconds: he applies slow careful pressure and the arm on the feed twitches in tiny increments. From 7-10 seconds: he holds steady force, jaw tight; end frozen still applying pressure on the same feed framing so the next shot can continue the arm's reaction without resetting. Ambient noise: cabin room tone with rising servo strain from the feed. SFX: hydraulic strain, soft stick detents. Dialogue: None.",
+      "vi_voiceover_text": "Override tay. Chậm. Tôi đẩy lực từng độ — không phải lúc khoe tốc độ.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 4,
+      "duration_seconds": 6,
+      "role_label": "Khớp nhúc rồi cứng lại",
+      "ingredients_used": "Mining robot · Erik · Cabin robot-ops",
+      "prompt_detail_md": "## Handoff\n- **START:** Continuous từ S4 — cùng feed + lực đang giữ.\n- **END STATE:** Arm khóa cứng; mặt Erik căng — S6 widen ra tường feed.\n\n## Nhịp trong clip\n- **0–3s:** Arm suýt thoát.\n- **3–6s:** Khóa cứng; end mặt + feed.",
+      "visual_prompt": "Using the provided images for the mining robot, Erik, and the robot-ops cabin, create a 6-second shot, 50mm lens. Continuing in the same override feed framing while pressure is still applied: From 0-3 seconds: on the feed the mining robot's stuck drill arm almost frees with one clear twitch. From 3-6 seconds: it slams back into a hard lock, amber fault lights stutter, blonde Erik's jaw tightens; end frozen on his tense face beside the locked feed so the next shot can widen to the console wall. Ambient noise: servo strain peaking then cutting. SFX: harsh hydraulic clunk, failed-confirm buzz. Dialogue: None.",
+      "vi_voiceover_text": "Nhúc một cái… rồi cứng. Robot đắt. Va chạm còn đắt hơn.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 5,
+      "duration_seconds": 8,
+      "role_label": "Telemetry drop nửa giây",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Widen từ S5 (mặt + feed) ra tường console.\n- **END STATE:** Feed vừa nhảy lại; Erik bám mép console — S7 mở proximity trên schematic cùng tường.\n\n## Nhịp trong clip\n- **0–4s:** Feed Unit 7 → static.\n- **4–8s:** Feed lệch pha trở lại; end tay bám mép.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create an 8-second shot, 35mm lens. Continuing by widening from the previous tight face-and-feed framing to the console wall: From 0-4 seconds: Unit 7's feed collapses into static snow while neighboring cyan feeds keep running, no readable text. From 4-8 seconds: the feed returns offset and glitchy as blonde Erik braces one hand on the console edge; end frozen in this wider console-wall framing ready for a proximity warning on the same schematic wall next. Ambient noise: brief silence then harsh static burst. SFX: telemetry dropout glitch. Dialogue: None.",
+      "vi_voiceover_text": "Telemetry đứt. Nửa giây trên đá ngoài kia là một đời người máy.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 6,
+      "duration_seconds": 8,
+      "role_label": "Proximity — nguy cơ va robot khác",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Cùng tường schematic S6.\n- **END STATE:** Erik theo dõi khoảng cách Unit 4→7 — S8 push-in mặt từ eyeline này.\n\n## Nhịp trong clip\n- **0–4s:** Vòng proximity nở.\n- **4–8s:** Split feed Unit 4 tiến gần; end nhìn khoảng cách.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create an 8-second shot, 35mm lens. Continuing on the same console-wall schematic after the telemetry glitch: From 0-4 seconds: an expanding proximity warning ring grows from the red Unit 7 node toward another cyan robot icon — abstract shapes only, no readable text. From 4-8 seconds: split in a second feed of another mining robot advancing toward frozen Unit 7 while blonde Erik tracks the closing gap; end frozen on his watching face lit by warning glow so the next shot can push into that face for the choice. Ambient noise: warning chirps accelerating slightly. SFX: proximity warning pulses. Dialogue: None.",
+      "vi_voiceover_text": "Unit 4 đang tiến vào vùng nguy hiểm. Khoảng cách đang ăn dần.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 7,
+      "duration_seconds": 8,
+      "role_label": "Cao trào — chọn sản lượng vs an toàn",
+      "ingredients_used": "Erik · Cabin robot-ops",
+      "prompt_detail_md": "## Handoff\n- **START:** Push-in từ mặt đang theo dõi S7.\n- **END STATE:** Mắt khóa tile cyan (safe-hold) — S9 mở tay thực thi quyết định đó.\n\n## Nhịp trong clip\n- **0–4s:** Push cận mặt cyan/amber.\n- **4–8s:** Hai tile lựa chọn; end nhìn về phía cyan.",
+      "visual_prompt": "Using the provided images for Erik and the robot-ops cabin, create an 8-second shot, 85mm lens, shallow depth of field. Continuing by pushing into the face that was tracking proximity: From 0-4 seconds: slow push-in to blonde Erik's face lit by competing cyan and amber console glow, breath held. From 4-8 seconds: two large abstract choice tiles hold behind him — steady cyan for swarm safe-hold, amber for keep-yield — no readable text; his eyes flick then settle on the cyan tile; end frozen looking at cyan so the next shot starts his hands executing safe-hold. Ambient noise: narrowed cabin hush, distant hull creak. SFX: soft dual UI pulse waiting for input. Dialogue: None.",
+      "vi_voiceover_text": "Vega hỏi: giữ sản lượng, hay giữ khoảng cách an toàn cho cả đàn.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 8,
+      "duration_seconds": 10,
+      "role_label": "Safe-hold — chuỗi override thành công",
+      "ingredients_used": "Erik · Cabin robot-ops · Mining robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Cắt xuống tay thực thi sau khi mắt đã chọn cyan ở S8.\n- **END STATE:** Vai hạ, Unit 7 amber ổn định — S10: vài bước tới cửa sổ (duy nhất chỗ đổi không gian có chủ đích).\n\n## Nhịp trong clip\n- **0–4s:** Chuỗi override chậm.\n- **4–7s:** Swarm đóng cyan; Unit 4 dừng.\n- **7–10s:** Unit 7 safe-hold; end vai hạ.",
+      "visual_prompt": "Using the provided images for Erik, the robot-ops cabin, and the mining robot, create a 10-second locked-off medium shot, 50mm lens. Continuing from the choice — his decision already on cyan safe-hold: From 0-4 seconds: blonde Erik's hands execute a deliberate slow override sequence on the console. From 4-7 seconds: the swarm schematic freezes into calm cyan and the advancing robot icon stops short of Unit 7. From 7-10 seconds: on the feed Unit 7 settles into a stable safe-hold pose as its fault light shifts from red to steady amber; tension leaves his shoulders; end frozen on that released posture so the next shot can cut to him at the observation window after the incident. Ambient noise: fans settle to a lower steady hum. SFX: confirmatory chime chain, soft thump as robot locks. Dialogue: None.",
+      "vi_voiceover_text": "Tôi chọn safe-hold. Nhịp chậm — Unit 7 dừng đúng chỗ, đàn thở lại.",
+      "voice_path": null,
+      "voice_duration": null
+    },
+    {
+      "index": 9,
+      "duration_seconds": 8,
+      "role_label": "Kết đọng — nhìn kính + bắc cầu",
+      "ingredients_used": "Erik · Cửa sổ + Ryke-114 + đàn robot",
+      "prompt_detail_md": "## Handoff\n- **START:** Sau S9 — đã xong việc; mở profile tại cửa sổ (đổi không gian có chủ đích, dùng soft cut/crossfade hậu kỳ).\n- **END STATE:** Tay hạ khỏi kính; im lặng — kết phần.\n\n## Nhịp trong clip\n- **0–4s:** Profile nhìn đàn robot đứng im an toàn.\n- **4–8s:** Pull-back; hai ngón chạm kính rồi hạ; earpiece click.",
+      "visual_prompt": "Using the provided images for Erik and the observation window with asteroid Ryke-114 and mining robots, create an 8-second shot, 35mm lens. Soft scene change after the resolved console incident: From 0-4 seconds: calm profile of blonde Erik at the observation window looking out as mining robots on the sunlit asteroid hold mostly still in safe spacing, warm low cabin light, earpiece cyan still on. From 4-8 seconds: slow pull-back to include the thick window frame and quiet asteroid beyond; he rests two fingers on the glass then lowers his hand; end frozen after the hand drops, no HUD or only a faint tiny corner mark. Ambient noise: soft hull vibration, almost peaceful. SFX: single soft earpiece click closing the incident. Dialogue: None.",
+      "vi_voiceover_text": "Quặng về chậm hơn hôm nay. Không sao. Kỹ sư sống bằng quyết định nhỏ — và im lặng sau đó.",
+      "voice_path": null,
+      "voice_duration": null
+    }
+  ],
+  "continuity_notes": [
+    "P1 S10 → S1: match tay — Tay đang hover override + mặt cận → S1 mở cùng khung, nghiêng vào, bắt đầu isolate",
+    "S1 → S2: nối tay — S1 đóng tay chạm tile đỏ → S2 mở kéo tile tách khỏi swarm",
+    "S2 → S3: eyeline vào feed — S2 đóng nhìn feed Unit 7 đóng băng → S3 = phóng to khớp trên đúng feed đó",
+    "S3 → S4: pull back tay — S3 đóng cận khớp + Erik nghiêng → S4 mở OTS tay nắm override stick (cùng sự cố)",
+    "S4 → S5: continuous feed — S4 đóng đang giữ lực, arm run → S5 mở cùng feed: nhúc rồi khóa cứng",
+    "S5 → S6: widen console — S5 đóng mặt căng + feed lỗi → S6 mở rộng tường feed, tín hiệu drop",
+    "S6 → S7: cùng schematic — S6 đóng feed nhảy lại → S7 mở vòng proximity trên schematic + Unit 4",
+    "S7 → S8: push face — S7 đóng Erik theo dõi khoảng cách → S8 cận mặt + 2 tile lựa chọn",
+    "S8 → S9: quyết định→hành động — S8 đóng mắt chọn phía cyan → S9 mở tay thực thi safe-hold",
+    "S9 → S10: xả nhịp — S9 đóng vai hạ, Unit 7 amber ổn → S10 mở ở cửa sổ (bước ngắn từ console đã xong việc)"
+  ],
+  "uploaded_video_path": null,
+  "voice_full_path": null,
+  "voice_full_duration": null,
+  "status": "awaiting_review",
+  "error": null,
+  "review_gates": {
+    "script_to_video": {
+      "reached_at": "2026-08-11T15:16:55.692691+00:00",
+      "approved_at": null,
+      "segment_count": 10,
+      "edited": false
+    }
+  },
+  "review_gate": "script_to_video"
+}

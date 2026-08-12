@@ -20,11 +20,16 @@ def start_job(
     supervised: bool = False,
     hardsub_blur_enabled: bool = False,
     hardsub_no_ranges: str | None = None,
+    local_file_path: str | None = None,
+    user_prompt: str | None = None,
 ) -> None:
     """
     Spawn một daemon thread chạy pipeline.run_pipeline(). Không trả về gì —
     tiến trình job được theo dõi qua jobs/{job_id}/job.json, không qua giá trị
     trả về của hàm này.
+
+    local_file_path/user_prompt: xem docstring `pipeline.run_pipeline()` —
+    truyền thẳng xuống không xử lý gì thêm ở lớp này.
     """
     thread = threading.Thread(
         target=_run_and_swallow_exit,
@@ -38,6 +43,8 @@ def start_job(
             supervised,
             hardsub_blur_enabled,
             hardsub_no_ranges,
+            local_file_path,
+            user_prompt,
         ),
         daemon=True,
     )
@@ -54,6 +61,8 @@ def _run_and_swallow_exit(
     supervised: bool = False,
     hardsub_blur_enabled: bool = False,
     hardsub_no_ranges: str | None = None,
+    local_file_path: str | None = None,
+    user_prompt: str | None = None,
 ) -> None:
     """
     run_pipeline() tự gọi sys.exit() khi hoàn tất/lỗi (thiết kế cho CLI). Trong
@@ -71,6 +80,8 @@ def _run_and_swallow_exit(
             supervised=supervised,
             hardsub_blur_enabled=hardsub_blur_enabled,
             hardsub_no_ranges=hardsub_no_ranges,
+            local_file_path=local_file_path,
+            user_prompt=user_prompt,
         )
     except SystemExit:
         pass

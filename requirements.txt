@@ -36,6 +36,7 @@ python-dotenv>=1.0.0    # Load ROUTER_BASE_URL/ROUTER_API_KEY/ROUTER_MODEL từ 
 fastapi>=0.110.0         # Backend API cho React frontend
 uvicorn>=0.29.0          # ASGI server chạy FastAPI
 itsdangerous>=2.2.0      # Ký/verify session cookie đăng nhập (7 ngày)
+python-multipart>=0.0.9  # Parse UploadFile/Form — cần cho nguồn "Tải file lên"
 
 # ── Test ────────────────────────────────────────────────────────────────────
 pytest>=8.0.0            # tests/unit — HTTP tới Zernio luôn được mock, không gọi thật

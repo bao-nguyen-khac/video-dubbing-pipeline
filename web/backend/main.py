@@ -23,6 +23,7 @@ from web.backend.generate_jobs_api import router as generate_jobs_router  # noqa
 from web.backend.jobs_api import router as jobs_router  # noqa: E402
 from web.backend.publish_api import router as publish_router  # noqa: E402
 from web.backend.review_api import router as review_router  # noqa: E402
+from web.backend.script_to_video_jobs_api import router as script_to_video_jobs_router  # noqa: E402
 from web.backend.voices_api import router as voices_router  # noqa: E402
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -89,6 +90,9 @@ app.include_router(review_router, prefix="/api/jobs")
 # state machine khác hẳn luồng dub (contracts/api.md). Chốt duyệt outline vẫn
 # đi qua review_router ở trên (route /api/jobs/{id}/review đã generic theo gate).
 app.include_router(generate_jobs_router, prefix="/api/generate-jobs")
+# script-to-video: router riêng, chốt duyệt cũng tự có route trên router này
+# (KHÔNG đi qua review_router) — xem docstring script_to_video_jobs_api.py.
+app.include_router(script_to_video_jobs_router, prefix="/api/script-to-video-jobs")
 app.include_router(voices_router, prefix="/api/voices")
 app.include_router(publish_router, prefix="/api/publish")
 app.include_router(downloads_router, prefix="/api/downloads")

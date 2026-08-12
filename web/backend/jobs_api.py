@@ -12,9 +12,9 @@ import json
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pipeline import (
     JOBS_DIR,
@@ -207,7 +207,7 @@ def _job_to_detail(job: dict) -> dict:
 
 class SubmitJobRequest(BaseModel):
     url: str
-    script_mode: str  # "translate" | "rewrite" | "subtitle" | "download"
+    script_mode: str  # "translate" | "rewrite" | "subtitle" | "visual" | "download"
     dynamic_captions: bool = False
     tts_provider: str = "edge-tts"
     voice_id: str | None = None
@@ -221,16 +221,40 @@ class SubmitJobRequest(BaseModel):
     # (field ĐỘC LẬP với keep_original_ranges — FR-004).
     hardsub_blur_enabled: bool = False
     hardsub_no_ranges: str | None = None
+    # Ghi chú định hướng tự do cho LLM ở script_mode="visual" — bị bỏ qua ở
+    # mọi script_mode khác (xem pipeline.create_job()).
+    user_prompt: str | None = None
+
+
+# Giống SubmitJobRequest nhưng KHÔNG có `url` — nguồn là file upload, nhận
+# riêng qua UploadFile ở endpoint (xem submit_job_upload()).
+class UploadJobRequest(BaseModel):
+    script_mode: str
+    dynamic_captions: bool = False
+    tts_provider: str = "edge-tts"
+    voice_id: str | None = None
+    keep_original_ranges: str | None = None
+    supervised: bool = False
+    hardsub_blur_enabled: bool = False
+    hardsub_no_ranges: str | None = None
+    user_prompt: str | None = None
+
+
+def _validate_job_fields(script_mode: str, tts_provider: str) -> JSONResponse | None:
+    """Validation dùng chung giữa submit_job() (URL) và submit_job_upload() (file)."""
+    if script_mode not in ("translate", "rewrite", "subtitle", "visual", "download"):
+        return _error(400, "script_mode phải là 'translate', 'rewrite', 'subtitle', 'visual' hoặc 'download'")
+    if tts_provider not in ("edge-tts", "lucyai", "omnivoice"):
+        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
+    return None
 
 
 @router.post("", status_code=201)
 async def submit_job(body: SubmitJobRequest):
     """POST /api/jobs — submit job mới (FR-001, FR-002, FR-009, contracts/api.md)."""
-    if body.script_mode not in ("translate", "rewrite", "subtitle", "download"):
-        return _error(400, "script_mode phải là 'translate', 'rewrite', 'subtitle' hoặc 'download'")
-
-    if body.tts_provider not in ("edge-tts", "lucyai", "omnivoice"):
-        return _error(400, "tts_provider phải là 'edge-tts', 'lucyai' hoặc 'omnivoice'")
+    validation_error = _validate_job_fields(body.script_mode, body.tts_provider)
+    if validation_error:
+        return validation_error
 
     try:
         platform = detect_platform(body.url)
@@ -253,6 +277,7 @@ async def submit_job(body: SubmitJobRequest):
             supervised=body.supervised,
             hardsub_blur_enabled=body.hardsub_blur_enabled,
             hardsub_no_ranges=body.hardsub_no_ranges,
+            user_prompt=body.user_prompt,
         )
     except ValueError as e:
         return _error(400, str(e))
@@ -266,6 +291,72 @@ async def submit_job(body: SubmitJobRequest):
         supervised=body.supervised,
         hardsub_blur_enabled=body.hardsub_blur_enabled,
         hardsub_no_ranges=body.hardsub_no_ranges,
+        user_prompt=body.user_prompt,
+    )
+    return {"job_id": job["job_id"]}
+
+
+@router.post("/upload", status_code=201)
+async def submit_job_upload(file: UploadFile = File(...), metadata: str = Form(...)):
+    """
+    POST /api/jobs/upload — submit job từ file video local (multipart), thay
+    cho URL — vd video xuất sẵn từ dịch vụ không có API tải tự động (Google
+    Flow/Veo...). `metadata` là JSON string cùng field với SubmitJobRequest
+    (trừ `url`) — gộp vào 1 field Form thay vì khai từng field rời rạc, để
+    tái dùng ĐÚNG validation của UploadJobRequest.
+
+    Job tạo ra có platform="upload", source_url = tên file gốc (chỉ để hiển
+    thị). Không qua download_registry (không có URL thật để dedup).
+    """
+    try:
+        body = UploadJobRequest.model_validate_json(metadata)
+    except ValidationError as e:
+        return _error(400, f"metadata không hợp lệ: {e}")
+
+    validation_error = _validate_job_fields(body.script_mode, body.tts_provider)
+    if validation_error:
+        return validation_error
+
+    running_job_id = find_running_job_id()
+    if running_job_id:
+        return _error(409, "Đang có job xử lý, vui lòng chờ", running_job_id=running_job_id)
+
+    display_name = file.filename or "video-tai-len.mp4"
+    try:
+        job = create_job(
+            display_name,
+            "upload",
+            body.script_mode,
+            dynamic_captions=body.dynamic_captions,
+            tts_provider=body.tts_provider,
+            voice_id=body.voice_id,
+            keep_original_ranges=body.keep_original_ranges,
+            supervised=body.supervised,
+            hardsub_blur_enabled=body.hardsub_blur_enabled,
+            hardsub_no_ranges=body.hardsub_no_ranges,
+            user_prompt=body.user_prompt,
+        )
+    except ValueError as e:
+        return _error(400, str(e))
+
+    # create_job() đã mkdir job_dir — ghi file upload thẳng vào đó, streaming
+    # (không load hết vào RAM) để chịu được video vài trăm MB.
+    dest_path = JOBS_DIR / job["job_id"] / "source.mp4"
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    start_job(
+        display_name,
+        body.script_mode,
+        job["job_id"],
+        dynamic_captions=body.dynamic_captions,
+        tts_provider=body.tts_provider,
+        voice_id=body.voice_id,
+        supervised=body.supervised,
+        hardsub_blur_enabled=body.hardsub_blur_enabled,
+        hardsub_no_ranges=body.hardsub_no_ranges,
+        local_file_path=str(dest_path),
+        user_prompt=body.user_prompt,
     )
     return {"job_id": job["job_id"]}
 

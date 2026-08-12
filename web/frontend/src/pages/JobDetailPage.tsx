@@ -109,9 +109,12 @@ export default function JobDetailPage() {
     }, POLL_INTERVAL_MS);
   }
 
-  // Chỉ tải danh sách giọng khi job có lồng tiếng (translate/rewrite) — job
-  // "subtitle"/"download" không có khái niệm giọng đọc để đổi
-  const isDubbingJob = job?.script_mode === "translate" || job?.script_mode === "rewrite";
+  // Chỉ tải danh sách giọng khi job có lồng tiếng (translate/rewrite/visual) —
+  // job "subtitle"/"download" không có khái niệm giọng đọc để đổi
+  const isDubbingJob =
+    job?.script_mode === "translate" ||
+    job?.script_mode === "rewrite" ||
+    job?.script_mode === "visual";
   useEffect(() => {
     if (!isDubbingJob || voices.length > 0) return;
     listVoices()
@@ -492,9 +495,15 @@ export default function JobDetailPage() {
               <div className="detail-item">
                 <div className="detail-item__label">Nguồn</div>
                 <div className="detail-item__value">
-                  <a href={job.source_url} target="_blank" rel="noreferrer">
-                    {job.source_url}
-                  </a>
+                  {job.platform === "upload" ? (
+                    // Job "Tải file lên" — source_url chỉ là tên file gốc,
+                    // không phải URL thật, nên không render thành link.
+                    job.source_url
+                  ) : (
+                    <a href={job.source_url} target="_blank" rel="noreferrer">
+                      {job.source_url}
+                    </a>
+                  )}
                 </div>
               </div>
               <div className="detail-item">

@@ -20,9 +20,18 @@ from pipeline import _write_job as write_job
 
 @pytest.fixture()
 def tmp_jobs_dir(tmp_path, monkeypatch) -> Path:
-    """Trỏ JOBS_DIR (pipeline, backend, và generate_pipeline — 010) sang tmp_path/jobs."""
+    """Trỏ JOBS_DIR (pipeline, backend, generate_pipeline — 010) sang
+    tmp_path/jobs.
+
+    script_to_video_pipeline.PROJECT_ROOT_DIR bị patch RIÊNG sang
+    tmp_path/script-to-video — dự án script-to-video KHÔNG dùng jobs/ nữa
+    (tách biệt hoàn toàn khỏi dub/generate) — KHÔNG được để test ghi vào thư
+    mục script-to-video/ thật ở repo root (chứa ví dụ viết tay
+    film-vs-digital-camera/ của người dùng).
+    """
     import generate_pipeline
     import pipeline
+    import script_to_video_pipeline
     from web.backend import generate_jobs_api, jobs_api
 
     jobs_dir = tmp_path / "jobs"
@@ -31,6 +40,7 @@ def tmp_jobs_dir(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(jobs_api, "JOBS_DIR", jobs_dir)
     monkeypatch.setattr(generate_pipeline, "JOBS_DIR", jobs_dir)
     monkeypatch.setattr(generate_jobs_api, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(script_to_video_pipeline, "PROJECT_ROOT_DIR", tmp_path / "script-to-video")
     return jobs_dir
 
 
@@ -170,6 +180,93 @@ def make_generate_job(tmp_jobs_dir):
         return read_job(job_id)
 
     return _make
+
+
+@pytest.fixture()
+def make_script_to_video_project(tmp_jobs_dir):
+    """
+    Tạo script-to-video/{slug}/project.json qua
+    script_to_video_pipeline.create_script_to_video_project(), cho phép seed
+    sẵn từng phần (part-N/script.json) để dựng fixture cho từng bước pipeline
+    mà không cần gọi LLM thật.
+
+    `tmp_jobs_dir` chỉ cần để lấy đúng lượt patch `PROJECT_ROOT_DIR` (fixture
+    đó đã patch cả JOBS_DIR lẫn PROJECT_ROOT_DIR) — dự án script-to-video
+    KHÔNG nằm trong thư mục jobs/ nó trả về.
+
+    `parts`: dict {part_index: {"screen_items": [...], "status": ...,
+    "title": ..., "role": ..., "review_gate": ..., "review_gates": ...,
+    "uploaded_video_path": ..., "voice_full_path": ..., "voice_full_duration": ...,
+    "continuity_notes": ..., "error": ...}} — phần nào không liệt kê thì
+    KHÔNG tạo part-N/script.json (giữ nguyên "chưa sinh kịch bản").
+    """
+    import script_to_video_pipeline as s2v
+
+    def _make(
+        slug: str = "proj-s2v-test-001",
+        *,
+        premise: str = "chủ đề thử nghiệm",
+        num_parts: int = 1,
+        target_screens_per_part: int = 3,
+        status: str = "pending",
+        extra: dict | None = None,
+        parts: dict[int, dict] | None = None,
+    ) -> dict:
+        project = s2v.create_script_to_video_project(
+            premise,
+            num_parts=num_parts,
+            target_screens_per_part=target_screens_per_part,
+            slug=slug,
+        )
+        project["status"] = status
+        if extra:
+            project.update(extra)
+        s2v._write_project(slug, project)
+
+        for part_index, cfg in (parts or {}).items():
+            part_dir = s2v.part_dir_for(slug, part_index)
+            (part_dir / "video-raw").mkdir(parents=True, exist_ok=True)
+            part_data = {
+                "part_index": part_index,
+                "title": cfg.get("title", f"Phần {part_index + 1}"),
+                "role": cfg.get("role", "Hook"),
+                "screens": cfg.get("screen_items", []),
+                "continuity_notes": cfg.get("continuity_notes", []),
+                "uploaded_video_path": cfg.get("uploaded_video_path"),
+                "voice_full_path": cfg.get("voice_full_path"),
+                "voice_full_duration": cfg.get("voice_full_duration"),
+                "status": cfg.get("status", "awaiting_review"),
+                "review_gate": cfg.get("review_gate"),
+                "review_gates": cfg.get("review_gates", {}),
+                "error": cfg.get("error"),
+            }
+            s2v._write_part(slug, part_index, part_data)
+
+        return s2v.read_project(slug)
+
+    return _make
+
+
+def _part_screen(
+    index: int,
+    *,
+    duration_seconds: int = 8,
+    voice_path: str | None = None,
+    voice_duration: float | None = None,
+) -> dict:
+    """Dựng 1 phần tử `screens[]` mẫu cho test — giữ đủ field bắt buộc của
+    part-N/script.json (screen_script_generator.write_part_script())."""
+    return {
+        "index": index,
+        "duration_seconds": duration_seconds,
+        "role_label": f"Vai trò screen {index + 1}",
+        "ingredients_used": "Nhân vật · Bối cảnh",
+        "prompt_detail_md": "## Handoff\n- **START:** ...\n- **END STATE:** ...\n## Nhịp trong clip\n- **0-Ns:** ...",
+        "visual_prompt": f"Using the provided images for the character, create a {duration_seconds}-second shot. Dialogue: None.",
+        "vi_voiceover_text": f"Lời thoại screen {index + 1}.",
+        "voice_path": voice_path,
+        "voice_duration": voice_duration,
+    }
 
 
 # ── Dữ liệu mẫu ngắn, dùng lại giữa các test ────────────────────────────────

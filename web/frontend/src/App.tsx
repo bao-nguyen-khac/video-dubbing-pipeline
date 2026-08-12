@@ -6,6 +6,7 @@ import JobDetailPage from "./pages/JobDetailPage";
 import PublishPage from "./pages/PublishPage";
 import DownloadsPage from "./pages/DownloadsPage";
 import GenerateVideoPage from "./pages/GenerateVideoPage";
+import ScriptToVideoPage from "./pages/ScriptToVideoPage";
 import ConfirmDialog from "./components/ConfirmDialog";
 import "./App.css";
 
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<HomePage />} />
         <Route path="/generate" element={<GenerateVideoPage />} />
+        <Route path="/script-to-video" element={<ScriptToVideoPage />} />
         <Route path="/jobs" element={<JobListPage />} />
         <Route path="/jobs/:jobId" element={<JobDetailPage />} />
         <Route path="/downloads" element={<DownloadsPage />} />

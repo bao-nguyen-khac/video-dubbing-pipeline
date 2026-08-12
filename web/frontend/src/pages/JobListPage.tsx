@@ -5,9 +5,11 @@ import {
   deleteJob,
   listGenerateJobs,
   listJobs,
+  listScriptToVideoJobs,
   pinJob,
   type GenerateJobSummary,
   type JobSummary,
+  type ScriptToVideoJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
@@ -82,21 +84,46 @@ function GenerateJobRow({ job }: { job: GenerateJobSummary }) {
   );
 }
 
+// script-to-video: job chưa có pin/xoá ở backend (chỉ dub job có 2 thao tác
+// đó) — hàng riêng đơn giản, cùng mẫu GenerateJobRow, chỉ link xem.
+function ScriptToVideoJobRow({ job }: { job: ScriptToVideoJobSummary }) {
+  return (
+    <Link to={`/script-to-video?project=${job.slug}`} className="job-row" title={job.premise}>
+      <span className="job-row__url">{job.premise}</span>
+      <div className="job-row__meta">
+        <span>Script-to-video · {job.parts_done}/{job.parts_total} phần</span>
+        <span>·</span>
+        <span title={absoluteTime(job.created_at)}>{relativeTime(job.created_at)}</span>
+      </div>
+      <div className="job-row__status">
+        <StatusBadge status={job.status} reviewGate={job.review_gate} />
+      </div>
+    </Link>
+  );
+}
+
 type UnifiedRest =
   | { kind: "dub"; job: JobSummary }
-  | { kind: "generate"; job: GenerateJobSummary };
+  | { kind: "generate"; job: GenerateJobSummary }
+  | { kind: "script_to_video"; job: ScriptToVideoJobSummary };
 
 export default function JobListPage() {
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
   const [generateJobs, setGenerateJobs] = useState<GenerateJobSummary[] | null>(null);
+  const [scriptToVideoJobs, setScriptToVideoJobs] = useState<ScriptToVideoJobSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [dubRes, generateRes] = await Promise.all([listJobs(), listGenerateJobs()]);
+      const [dubRes, generateRes, scriptToVideoRes] = await Promise.all([
+        listJobs(),
+        listGenerateJobs(),
+        listScriptToVideoJobs(),
+      ]);
       setJobs(dubRes.jobs);
       setGenerateJobs(generateRes.jobs);
+      setScriptToVideoJobs(scriptToVideoRes.jobs);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Không tải được danh sách job");
     }
@@ -139,18 +166,20 @@ export default function JobListPage() {
     }
   }
 
-  const loaded = jobs !== null && generateJobs !== null;
-  const totalCount = (jobs?.length ?? 0) + (generateJobs?.length ?? 0);
+  const loaded = jobs !== null && generateJobs !== null && scriptToVideoJobs !== null;
+  const totalCount = (jobs?.length ?? 0) + (generateJobs?.length ?? 0) + (scriptToVideoJobs?.length ?? 0);
 
   // Ghim lên đầu (mục Ưu tiên) — chỉ dub job có khái niệm ghim
   const pinned = (jobs ?? [])
     .filter((j) => j.pinned)
     .sort((a, b) => (b.pinned_at ?? "").localeCompare(a.pinned_at ?? ""));
 
-  // "Còn lại" = dub job chưa ghim + MỌI job generate, trộn theo thời gian tạo
+  // "Còn lại" = dub job chưa ghim + MỌI job generate/script-to-video, trộn
+  // theo thời gian tạo
   const rest: UnifiedRest[] = [
     ...(jobs ?? []).filter((j) => !j.pinned).map((job): UnifiedRest => ({ kind: "dub", job })),
     ...(generateJobs ?? []).map((job): UnifiedRest => ({ kind: "generate", job })),
+    ...(scriptToVideoJobs ?? []).map((job): UnifiedRest => ({ kind: "script_to_video", job })),
   ].sort((a, b) => b.job.created_at.localeCompare(a.job.created_at));
 
   return (
@@ -217,19 +246,23 @@ export default function JobListPage() {
               </p>
             ) : (
               <div className="job-list">
-                {rest.map((item) =>
-                  item.kind === "dub" ? (
-                    <JobRow
-                      key={item.job.job_id}
-                      job={item.job}
-                      busy={busyId === item.job.job_id}
-                      onPin={handlePin}
-                      onDelete={handleDelete}
-                    />
-                  ) : (
-                    <GenerateJobRow key={item.job.job_id} job={item.job} />
-                  ),
-                )}
+                {rest.map((item) => {
+                  if (item.kind === "dub") {
+                    return (
+                      <JobRow
+                        key={item.job.job_id}
+                        job={item.job}
+                        busy={busyId === item.job.job_id}
+                        onPin={handlePin}
+                        onDelete={handleDelete}
+                      />
+                    );
+                  }
+                  if (item.kind === "generate") {
+                    return <GenerateJobRow key={item.job.job_id} job={item.job} />;
+                  }
+                  return <ScriptToVideoJobRow key={item.job.slug} job={item.job} />;
+                })}
               </div>
             )}
           </div>

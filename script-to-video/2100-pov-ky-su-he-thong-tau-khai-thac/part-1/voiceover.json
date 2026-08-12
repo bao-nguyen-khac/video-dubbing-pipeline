@@ -1,0 +1,57 @@
+{
+  "part": "part-1",
+  "video_raw": "video-raw/merge.mp4",
+  "total_duration_seconds": 76,
+  "screens": [
+    {
+      "index": 0,
+      "duration_seconds": 8,
+      "text": "Năm 2100. Quanh Ryke-114, đàn robot đang đào platinum, nickel và cobalt. Ca trực bắt đầu."
+    },
+    {
+      "index": 1,
+      "duration_seconds": 6,
+      "text": "Tôi không ra ngoài đá. Việc của tôi nằm trong cabin này."
+    },
+    {
+      "index": 2,
+      "duration_seconds": 8,
+      "text": "Tôi là Erik — kỹ sư hệ thống. Đàn robot chỉ mạnh khi còn nghe lệnh."
+    },
+    {
+      "index": 3,
+      "duration_seconds": 6,
+      "text": "Link. Điện. Swarm-hold. Tất cả phải xanh."
+    },
+    {
+      "index": 4,
+      "duration_seconds": 8,
+      "text": "Mười đơn vị bám đá cùng lúc — khoan, gàu, kéo. Một cơ thể ngoài kia."
+    },
+    {
+      "index": 5,
+      "duration_seconds": 6,
+      "text": "Nhìn gần: khớp ổn, mũi khoan ăn đúng mạch kim loại."
+    },
+    {
+      "index": 6,
+      "duration_seconds": 10,
+      "text": "Mỗi lệnh từ tay tôi xuống anten, xuống khớp. Sai một nhịp — cả đường quặng lệch."
+    },
+    {
+      "index": 7,
+      "duration_seconds": 8,
+      "text": "Nickel, cobalt, platinum chỉ về tàu khi đàn còn đồng bộ."
+    },
+    {
+      "index": 8,
+      "duration_seconds": 6,
+      "text": "Một tín hiệu lệch… rất nhỏ. Dễ bỏ qua."
+    },
+    {
+      "index": 9,
+      "duration_seconds": 10,
+      "text": "Unit 7 lệch đường khoan và mất khớp. Vega gọi tôi. Robot lỗi — việc của kỹ sư."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "slug": "2100-pov-ky-su-he-thong-tau-khai-thac",
+  "premise": "Erik — Kỹ Sư Hệ Thống / Robot Fleet. Arc: \"Ca Trực Quỹ Đạo\". - Nam người Tây (Caucasian), cuối 20 / đầu 30, khuôn mặt tập trung lạnh nhẹ, **tóc vàng ngắn**.",
+  "series_notes": "Xem quy tắc series đầy đủ tại script-to-video/pov-2100-asteroid-mining-series-rules.md",
+  "num_parts": 2,
+  "target_screens_per_part": 10,
+  "tts_provider": "edge-tts",
+  "voice_id": null,
+  "status": "ready",
+  "error": null,
+  "created_at": "2026-08-11T00:00:00+00:00",
+  "updated_at": "2026-08-11T00:00:00+00:00"
+}

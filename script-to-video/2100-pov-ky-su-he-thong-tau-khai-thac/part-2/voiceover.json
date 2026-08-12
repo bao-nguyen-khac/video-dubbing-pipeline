@@ -1,0 +1,57 @@
+{
+  "part": "part-2",
+  "video_raw": "video-raw/merge.mp4",
+  "total_duration_seconds": 80,
+  "screens": [
+    {
+      "index": 0,
+      "duration_seconds": 6,
+      "text": "Unit 7 vẫn kẹt. Tôi không chờ thêm."
+    },
+    {
+      "index": 1,
+      "duration_seconds": 8,
+      "text": "Cắt nó khỏi đàn trước. Cô lập — rồi mới đụng khớp hỏng."
+    },
+    {
+      "index": 2,
+      "duration_seconds": 8,
+      "text": "Khớp khoan khóa cứng ở góc xấu. Cứ giật mạnh là gãy cả cánh."
+    },
+    {
+      "index": 3,
+      "duration_seconds": 10,
+      "text": "Override tay. Chậm. Tôi đẩy lực từng độ — không phải lúc khoe tốc độ."
+    },
+    {
+      "index": 4,
+      "duration_seconds": 6,
+      "text": "Nhúc một cái… rồi cứng. Robot đắt. Va chạm còn đắt hơn."
+    },
+    {
+      "index": 5,
+      "duration_seconds": 8,
+      "text": "Telemetry đứt. Nửa giây trên đá ngoài kia là một đời người máy."
+    },
+    {
+      "index": 6,
+      "duration_seconds": 8,
+      "text": "Unit 4 đang tiến vào vùng nguy hiểm. Khoảng cách đang ăn dần."
+    },
+    {
+      "index": 7,
+      "duration_seconds": 8,
+      "text": "Vega hỏi: giữ sản lượng, hay giữ khoảng cách an toàn cho cả đàn."
+    },
+    {
+      "index": 8,
+      "duration_seconds": 10,
+      "text": "Tôi chọn safe-hold. Nhịp chậm — Unit 7 dừng đúng chỗ, đàn thở lại."
+    },
+    {
+      "index": 9,
+      "duration_seconds": 8,
+      "text": "Quặng về chậm hơn hôm nay. Không sao. Kỹ sư sống bằng quyết định nhỏ — và im lặng sau đó."
+    }
+  ]
+}

@@ -10,6 +10,7 @@ Hỗ trợ 2 mode:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -27,6 +28,13 @@ DEFAULT_MODEL = os.environ.get("ROUTER_MODEL", "gpt-4o-mini")
 # sẽ giữ pipeline 10 phút trước khi kịp fallback, nên hạ xuống 120s (vẫn dư cho
 # 1 lượt dịch cả transcript dài).
 ROUTER_TIMEOUT = float(os.environ.get("ROUTER_TIMEOUT", "120"))
+
+# Số ảnh tối đa gửi trong 1 lượt gọi vision (script_mode="visual",
+# describe_scenes_in_chunks() bên dưới) — 9router (model cu/gemini-3.1-pro)
+# trả lỗi cứng "Too many images in one request (max 12)" khi vượt, gặp thật
+# với video ~47s/13 cảnh. Không tăng số này lên mà không kiểm tra lại giới
+# hạn thật của model đang cấu hình.
+ROUTER_MAX_IMAGES_PER_CALL = int(os.environ.get("ROUTER_MAX_IMAGES_PER_CALL", "12"))
 
 # Trần token đầu ra mỗi lượt gọi LLM.
 #
@@ -486,6 +494,29 @@ def _rejected_param(error_message: str, sent_params) -> str | None:
     return None
 
 
+def _build_user_content(user_message: str, images: list[Path] | None):
+    """
+    Build nội dung message user — string thuần khi không có ảnh (hành vi cũ,
+    giữ nguyên với mọi lượt gọi translate/rewrite hiện có), hoặc content dạng
+    list chuẩn OpenAI-vision khi có ảnh (script_mode="visual" —
+    `describe_scenes()`). Ảnh encode base64 inline (data URL), không upload
+    qua endpoint riêng — cùng cách 9router/OpenRouter đều chấp nhận.
+    """
+    if not images:
+        return user_message
+
+    content: list[dict] = [{"type": "text", "text": user_message}]
+    for image_path in images:
+        b64 = base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            }
+        )
+    return content
+
+
 def _call_chat_api(
     base_url: str,
     api_key: str,
@@ -493,6 +524,7 @@ def _call_chat_api(
     system_prompt: str,
     user_message: str,
     temperature: float,
+    images: list[Path] | None = None,
 ) -> str:
     """
     Một lượt gọi chat completion tới endpoint OpenAI-compatible bất kỳ
@@ -501,6 +533,10 @@ def _call_chat_api(
     Model nào từ chối tham số tuỳ chọn (`temperature`, `max_tokens`) sẽ được gọi
     lại NGAY mà không có tham số đó, thay vì làm hỏng cả job — xem
     `_UNSUPPORTED_PARAMS`.
+
+    `images`: danh sách đường dẫn ảnh gửi kèm user_message (script_mode=
+    "visual") — model phải hỗ trợ vision, nếu không endpoint sẽ trả lỗi và
+    lan lên như mọi lỗi API khác (không có xử lý riêng).
 
     Raises:
         RuntimeError: Nếu gọi API thất bại hoặc trả về kết quả trống.
@@ -519,7 +555,7 @@ def _call_chat_api(
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": _build_user_content(user_message, images)},
         ],
     }
     if "temperature" not in known_bad:
@@ -580,7 +616,11 @@ def _reasoning_token_note(response) -> str:
 
 
 def _chat_completion(
-    system_prompt: str, user_message: str, temperature: float = 0.7, model: str | None = None
+    system_prompt: str,
+    user_message: str,
+    temperature: float = 0.7,
+    model: str | None = None,
+    images: list[Path] | None = None,
 ) -> str:
     """
     Gọi 9router (OpenAI-compatible chat completion) — helper dùng chung cho
@@ -605,7 +645,7 @@ def _chat_completion(
     try:
         return _call_chat_api(
             ROUTER_BASE_URL, ROUTER_API_KEY, model or DEFAULT_MODEL,
-            system_prompt, user_message, temperature,
+            system_prompt, user_message, temperature, images=images,
         )
     except TruncatedResponseError:
         # Câu trả lời quá dài so với trần token — đổi endpoint không giải quyết
@@ -627,7 +667,7 @@ def _chat_completion(
         try:
             return _call_chat_api(
                 fb_base_url, fb_api_key, fb_model,
-                system_prompt, user_message, temperature,
+                system_prompt, user_message, temperature, images=images,
             )
         except Exception as fallback_error:
             raise RuntimeError(
@@ -845,3 +885,109 @@ def _parse_numbered_lines(raw: str) -> list[str]:
         return []
     max_n = max(numbered.keys())
     return [numbered.get(n, "") for n in range(1, max_n + 1)]
+
+
+# ─── script_mode="visual" — kịch bản sinh từ hình ảnh, không dùng transcript ──
+
+_VISUAL_SCRIPT_SYSTEM_PROMPT = """Bạn là người viết lời thuyết minh (voice-over) tiếng Việt cho video, ví dụ video unbox/giới thiệu sản phẩm.
+
+Bạn sẽ nhận một chuỗi ảnh, mỗi ảnh là 1 khung hình đại diện của 1 cảnh liên tiếp trong video, đánh số đúng theo thứ tự thời gian xuất hiện.
+
+Với MỖI cảnh, viết đúng 1 câu thuyết minh tiếng Việt tự nhiên, liền mạch với các câu trước/sau (như đang thuyết minh xuyên suốt cả video chứ không phải mô tả rời rạc từng ảnh), mô tả đúng những gì thấy được trong ảnh.
+
+Quy tắc bắt buộc:
+- Chỉ nêu thông tin THẤY ĐƯỢC trong ảnh (hình dáng, màu sắc, thao tác, chữ đọc rõ trên bao bì/sản phẩm). KHÔNG bịa tên hãng, model, thông số kỹ thuật nếu không đọc rõ được chữ trong ảnh.
+- Không lặp lại nguyên văn câu trước.
+- Câu ngắn gọn, tự nhiên như giọng thuyết minh video thật, không văn viết cứng nhắc.
+- Mỗi dòng đầu vào có kèm "(~N ký tự)" — đó là độ dài mục tiêu để câu đọc VỪA ĐÚNG khung thời gian của cảnh đó (cảnh càng ngắn thì câu càng phải ngắn). Nếu 1 cảnh có nhiều chi tiết, hãy CHỌN đúng 1-2 chi tiết nổi bật nhất để nói, KHÔNG cố nhồi hết mọi thứ nhìn thấy vào 1 câu dài hơn nhiều lần con số này. TUYỆT ĐỐI KHÔNG chép lại "(~N ký tự)" vào kết quả, vì kết quả sẽ được đọc thành tiếng nguyên văn.
+- Nếu đầu vào có dòng "Định hướng thêm từ người dùng", hãy ưu tiên bám theo định hướng đó (giọng điệu, trọng tâm, điều cần nhấn mạnh) khi viết các câu — nhưng vẫn PHẢI tuân thủ quy tắc chỉ mô tả những gì thấy được trong ảnh, KHÔNG bịa thêm chi tiết không có trong hình chỉ vì định hướng yêu cầu.
+- Trả lời ĐÚNG theo định dạng "[số thứ tự] nội dung câu", mỗi cảnh 1 dòng, không thêm giải thích, không thêm dòng nào khác."""
+
+
+def describe_scenes(
+    frames: list[tuple[float, float, Path]],
+    offset: int = 0,
+    user_prompt: str | None = None,
+) -> list[str]:
+    """
+    Sinh đúng 1 câu thuyết minh tiếng Việt cho MỖI cảnh trong `frames`
+    (script_mode="visual", `script_gen/visual_script_generator.py`) — LLM chỉ
+    dựa vào ảnh, KHÔNG có transcript làm ngữ cảnh.
+
+    Args:
+        frames: List[(start, end, frame_path)] theo đúng thứ tự thời gian.
+        offset: Chỉ số cảnh đầu tiên trong `frames` so với danh sách gốc — chỉ
+            dùng để log/báo lỗi đúng số cảnh khi đệ quy chia đôi.
+        user_prompt: Ghi chú định hướng tự do của người dùng (vd "nhấn mạnh
+            tính năng chống nước") — chèn vào đầu prompt để LLM ưu tiên bám
+            theo, không thay đổi quy tắc chỉ mô tả những gì thấy trong ảnh.
+
+    Returns:
+        List[str] cùng độ dài với `frames`, 1 câu / cảnh, đúng thứ tự.
+
+    Raises:
+        RuntimeError: Model không hỗ trợ ảnh, hoặc số dòng trả về lệch dù đã
+            chia đôi tới lô 1 cảnh (cùng chiến lược với `_generate_numbered_lines()`).
+    """
+    markers = []
+    for i, (start, end, _path) in enumerate(frames):
+        budget = estimate_target_char_budget(end - start)
+        hint = f"(~{budget} ký tự) " if budget else ""
+        markers.append(
+            f"[{i + 1}] {hint}Cảnh lúc {start:.1f}s-{end:.1f}s (ảnh {i + 1} kèm theo)"
+        )
+    user_message = ""
+    if user_prompt and user_prompt.strip():
+        user_message += f"Định hướng thêm từ người dùng: {user_prompt.strip()}\n\n"
+    user_message += (
+        f"Video có {len(frames)} cảnh liên tiếp, ảnh gửi kèm đúng theo thứ tự dưới đây:\n"
+        + "\n".join(markers)
+    )
+    images = [path for _, _, path in frames]
+
+    problem: str | None = None
+    try:
+        raw = _chat_completion(
+            _VISUAL_SCRIPT_SYSTEM_PROMPT, user_message, temperature=0.7, images=images
+        )
+        results = [_strip_budget_hint(line) for line in _parse_numbered_lines(raw)]
+        if len(results) == len(frames):
+            return results
+        problem = f"trả về {len(results)} dòng, cần {len(frames)}"
+    except TruncatedResponseError as e:
+        problem = str(e)
+
+    if len(frames) == 1:
+        raise RuntimeError(
+            f"Viết kịch bản từ hình ảnh thất bại ở cảnh {offset + 1}: {problem}"
+        )
+
+    mid = len(frames) // 2
+    print(
+        f"[router_client] Kịch bản hình ảnh: lô cảnh {offset + 1}-{offset + len(frames)} "
+        f"({problem}) — chia đôi và thử lại"
+    )
+    return describe_scenes(
+        frames[:mid], offset, user_prompt
+    ) + describe_scenes(frames[mid:], offset + mid, user_prompt)
+
+
+def describe_scenes_in_chunks(
+    frames: list[tuple[float, float, Path]],
+    user_prompt: str | None = None,
+) -> list[str]:
+    """
+    Chia `frames` thành lô tối đa `ROUTER_MAX_IMAGES_PER_CALL` ảnh/lượt gọi
+    rồi nối kết quả — bắt buộc vì model vision (9router) từ chối thẳng lượt
+    gọi vượt trần ảnh (400 "Too many images in one request"), khác hẳn lỗi
+    hụt dòng mà `describe_scenes()` tự chia đôi xử lý được. Video dài hơn
+    `ROUTER_MAX_IMAGES_PER_CALL` cảnh LUÔN cần hàm này, không chỉ khi lỗi.
+
+    Đây là điểm vào chính cho `visual_script_generator.py` — dùng thay vì gọi
+    thẳng `describe_scenes()`.
+    """
+    results: list[str] = []
+    for start in range(0, len(frames), ROUTER_MAX_IMAGES_PER_CALL):
+        chunk = frames[start : start + ROUTER_MAX_IMAGES_PER_CALL]
+        results.extend(describe_scenes(chunk, offset=start, user_prompt=user_prompt))
+    return results

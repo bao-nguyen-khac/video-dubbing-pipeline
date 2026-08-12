@@ -90,6 +90,32 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+// Multipart upload (nguồn "Tải file lên") — KHÔNG dùng chung request(): hàm đó
+// ép cứng Content-Type: application/json, còn multipart cần trình duyệt tự
+// set boundary theo FormData, không tự tay set Content-Type được.
+async function uploadRequest<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
+
+  const body = await safeJson(res);
+
+  if (res.status === 401) {
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+    throw new ApiError(401, body);
+  }
+
+  if (!res.ok) {
+    throw new ApiError(res.status, body);
+  }
+
+  return body as T;
+}
+
 export function login(username: string, password: string) {
   return request<{ ok: boolean }>("/api/login", {
     method: "POST",
@@ -103,7 +129,7 @@ export function logout() {
 
 export function submitJob(
   url: string,
-  scriptMode: "translate" | "rewrite" | "subtitle" | "download",
+  scriptMode: "translate" | "rewrite" | "subtitle" | "visual" | "download",
   dynamicCaptions: boolean = false,
   ttsProvider?: string,
   voiceId?: string,
@@ -111,6 +137,7 @@ export function submitJob(
   supervised: boolean = false,
   hardsubBlurEnabled: boolean = false,
   hardsubNoRanges?: string,
+  userPrompt?: string,
 ) {
   return request<{ job_id: string }>("/api/jobs", {
     method: "POST",
@@ -124,8 +151,42 @@ export function submitJob(
       ...(voiceId ? { voice_id: voiceId } : {}),
       ...(keepOriginalRanges ? { keep_original_ranges: keepOriginalRanges } : {}),
       ...(hardsubNoRanges ? { hardsub_no_ranges: hardsubNoRanges } : {}),
+      ...(userPrompt ? { user_prompt: userPrompt } : {}),
     }),
   });
+}
+
+// Nguồn "Tải file lên" — thay cho submitJob() khi user chọn file local thay
+// vì URL (vd video xuất sẵn từ Google Flow/Veo, không có API tải tự động).
+export function submitJobUpload(
+  file: File,
+  scriptMode: "translate" | "rewrite" | "subtitle" | "visual" | "download",
+  dynamicCaptions: boolean = false,
+  ttsProvider?: string,
+  voiceId?: string,
+  keepOriginalRanges?: string,
+  supervised: boolean = false,
+  hardsubBlurEnabled: boolean = false,
+  hardsubNoRanges?: string,
+  userPrompt?: string,
+) {
+  const metadata = {
+    script_mode: scriptMode,
+    dynamic_captions: dynamicCaptions,
+    supervised,
+    hardsub_blur_enabled: hardsubBlurEnabled,
+    ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
+    ...(voiceId ? { voice_id: voiceId } : {}),
+    ...(keepOriginalRanges ? { keep_original_ranges: keepOriginalRanges } : {}),
+    ...(hardsubNoRanges ? { hardsub_no_ranges: hardsubNoRanges } : {}),
+    ...(userPrompt ? { user_prompt: userPrompt } : {}),
+  };
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("metadata", JSON.stringify(metadata));
+
+  return uploadRequest<{ job_id: string }>("/api/jobs/upload", form);
 }
 
 // ── Chốt kiểm duyệt (008-supervised-pipeline) ───────────────────────────────
@@ -396,6 +457,244 @@ export function rerunGenerateFromStep(
       }),
     },
   );
+}
+
+// ── Script-to-video: nhân vật/premise → nhiều PHẦN (part), Google Flow ──────
+//
+// v3: 1 dự án = 1 nhân vật/premise chia thành nhiều PHẦN (part), mỗi phần có
+// tiến trình RIÊNG (review/upload/synthesize/merge độc lập). Mỗi dự án là 1
+// thư mục script-to-video/<slug>/ tự đóng gói, tách biệt hoàn toàn khỏi
+// jobs/ (dub/generate) — `slug` là định danh DUY NHẤT.
+
+export type ScriptToVideoStatus = "pending" | "scripting" | "ready" | "failed";
+export type ScriptToVideoPartStatus =
+  | "pending"
+  | "awaiting_review"
+  | "awaiting_upload"
+  | "synthesizing"
+  | "merging"
+  | "done"
+  | "failed";
+
+export interface ScriptToVideoJobSummary {
+  slug: string;
+  job_type: "script_to_video";
+  premise: string;
+  // `status` là trạng thái TỔNG HỢP: khi dự án còn "pending"/"scripting"/"failed"
+  // ở cấp sinh kịch bản thì dùng luôn; khi "ready", backend suy ra từ trạng
+  // thái của các phần (ưu tiên failed > synthesizing > merging > awaiting_review
+  // > awaiting_upload > done) — KHÔNG lưu trực tiếp trên đĩa.
+  status: ScriptToVideoStatus | ScriptToVideoPartStatus;
+  progress_percent: number;
+  parts_done: number;
+  parts_total: number;
+  created_at: string;
+  review_gate: "script_to_video" | null;
+}
+
+export interface ScriptToVideoPartSummary {
+  index: number;
+  title: string | null;
+  role: string | null;
+  screen_count: number;
+  status: ScriptToVideoPartStatus;
+  progress_percent: number;
+  error: string | null;
+  review_url: string | null;
+  output_video_url: string | null;
+  can_retry: boolean;
+}
+
+export interface ScriptToVideoIngredient {
+  label: string;
+  image_prompt: string;
+}
+
+export interface ScriptToVideoCharacter {
+  character_name: string;
+  role_title: string;
+  arc_title: string;
+  parts_summary: { index: number; title: string; role: string; synopsis: string }[];
+  character_description_md: string;
+  ingredients: ScriptToVideoIngredient[];
+}
+
+export interface ScriptToVideoJobDetail extends ScriptToVideoJobSummary {
+  series_notes: string | null;
+  tts_provider: string;
+  voice_id: string | null;
+  target_screens_per_part: number;
+  error: string | null;
+  character: ScriptToVideoCharacter | null;
+  parts: ScriptToVideoPartSummary[];
+  can_retry: boolean;
+}
+
+export function submitScriptToVideoJob(
+  premise: string,
+  numParts: number = 2,
+  targetScreensPerPart: number = 10,
+  seriesNotes?: string,
+  ttsProvider?: string,
+  voiceId?: string,
+) {
+  return request<{ slug: string }>("/api/script-to-video-jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      premise,
+      num_parts: numParts,
+      target_screens_per_part: targetScreensPerPart,
+      ...(seriesNotes ? { series_notes: seriesNotes } : {}),
+      ...(ttsProvider ? { tts_provider: ttsProvider } : {}),
+      ...(voiceId ? { voice_id: voiceId } : {}),
+    }),
+  });
+}
+
+export function getScriptToVideoJob(slug: string) {
+  return request<ScriptToVideoJobDetail>(`/api/script-to-video-jobs/${slug}`);
+}
+
+export function listScriptToVideoJobs() {
+  return request<{ jobs: ScriptToVideoJobSummary[] }>("/api/script-to-video-jobs");
+}
+
+export function retryScriptToVideoJob(slug: string) {
+  return request<{ slug: string }>(`/api/script-to-video-jobs/${slug}/retry`, { method: "POST" });
+}
+
+// Nội dung character-bible.md (cấp dự án) dạng text thuần — KHÔNG dùng
+// request() vì response không phải JSON.
+export async function getScriptToVideoDeliverable(slug: string, filename: string): Promise<string> {
+  const res = await fetch(
+    `/api/script-to-video-jobs/${slug}/deliverables/${encodeURIComponent(filename)}`,
+    { credentials: "include" },
+  );
+  if (res.status === 401) {
+    if (window.location.pathname !== "/login") window.location.href = "/login";
+    throw new ApiError(401, null);
+  }
+  if (!res.ok) throw new ApiError(res.status, await safeJson(res));
+  return res.text();
+}
+
+// ── Theo phần (part) ─────────────────────────────────────────────────────────
+
+export function scriptToVideoPartOutputUrl(slug: string, partIndex: number) {
+  return `/api/script-to-video-jobs/${slug}/parts/${partIndex}/output`;
+}
+
+export async function getScriptToVideoPartDeliverable(
+  slug: string,
+  partIndex: number,
+  filename: string,
+): Promise<string> {
+  const res = await fetch(
+    `/api/script-to-video-jobs/${slug}/parts/${partIndex}/deliverables/${encodeURIComponent(filename)}`,
+    { credentials: "include" },
+  );
+  if (res.status === 401) {
+    if (window.location.pathname !== "/login") window.location.href = "/login";
+    throw new ApiError(401, null);
+  }
+  if (!res.ok) throw new ApiError(res.status, await safeJson(res));
+  return res.text();
+}
+
+export function retryScriptToVideoPart(slug: string, partIndex: number) {
+  return request<{ slug: string; part_index: number }>(
+    `/api/script-to-video-jobs/${slug}/parts/${partIndex}/retry`,
+    { method: "POST" },
+  );
+}
+
+export const SCRIPT_TO_VIDEO_PART_RERUN_STEPS = ["synthesizing", "merging"] as const;
+export type ScriptToVideoPartRerunStep = (typeof SCRIPT_TO_VIDEO_PART_RERUN_STEPS)[number];
+
+export function rerunScriptToVideoPartFromStep(
+  slug: string,
+  partIndex: number,
+  step: ScriptToVideoPartRerunStep,
+  voice?: { ttsProvider: string; voiceId: string },
+) {
+  return request<{ slug: string; part_index: number; resumed_status: string }>(
+    `/api/script-to-video-jobs/${slug}/parts/${partIndex}/rerun-from`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        step,
+        ...(voice ? { tts_provider: voice.ttsProvider, voice_id: voice.voiceId } : {}),
+      }),
+    },
+  );
+}
+
+// ── Chốt duyệt script/prompt (theo phần) ─────────────────────────────────────
+//
+// Payload/schema RIÊNG với ReviewPayload/saveReview() ở trên — mỗi screen có
+// 6 trường sửa được (khác 1 trường "text" của chốt transcript/script/outline)
+// nên route/type tách hẳn, không tái dùng chung.
+
+export interface ScriptToVideoReviewScreen {
+  index: number;
+  duration_seconds: number;
+  role_label: string;
+  ingredients_used: string;
+  prompt_detail_md: string;
+  visual_prompt: string;
+  vi_voiceover_text: string;
+}
+
+export interface ScriptToVideoReviewPayload {
+  part_index: number;
+  gate: "script_to_video";
+  title: string | null;
+  role: string | null;
+  continuity_notes: string[];
+  edited: boolean;
+  reached_at: string | null;
+  screens: ScriptToVideoReviewScreen[];
+}
+
+export function getScriptToVideoReview(slug: string, partIndex: number) {
+  return request<ScriptToVideoReviewPayload>(`/api/script-to-video-jobs/${slug}/parts/${partIndex}/review`);
+}
+
+export interface ScriptToVideoReviewEdit {
+  index: number;
+  duration_seconds?: number;
+  role_label?: string;
+  ingredients_used?: string;
+  prompt_detail_md?: string;
+  visual_prompt?: string;
+  vi_voiceover_text?: string;
+}
+
+export function saveScriptToVideoReview(slug: string, partIndex: number, edits: ScriptToVideoReviewEdit[]) {
+  return request<{ slug: string; part_index: number; saved_count: number }>(
+    `/api/script-to-video-jobs/${slug}/parts/${partIndex}/review`,
+    { method: "PUT", body: JSON.stringify({ screens: edits }) },
+  );
+}
+
+export function approveScriptToVideoReview(slug: string, partIndex: number) {
+  return request<{ slug: string; part_index: number; approved_gate: string; resumed_status: string }>(
+    `/api/script-to-video-jobs/${slug}/parts/${partIndex}/review/approve`,
+    { method: "POST" },
+  );
+}
+
+// ── Upload video đã tự nối (merge.mp4) cho 1 phần ────────────────────────────
+
+export function uploadPartVideo(slug: string, partIndex: number, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadRequest<{
+    slug: string;
+    part_index: number;
+    uploaded_video_path: string;
+    status: ScriptToVideoPartStatus;
+  }>(`/api/script-to-video-jobs/${slug}/parts/${partIndex}/upload`, form);
 }
 
 // ── Đăng video (006-publish-video-tab) ──────────────────────────────────────

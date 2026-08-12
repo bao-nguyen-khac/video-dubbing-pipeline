@@ -7,6 +7,7 @@ import {
   outputUrl,
   previewVoice,
   submitJob,
+  submitJobUpload,
   type JobDetail,
   type Voice,
 } from "../api/client";
@@ -31,8 +32,14 @@ export default function HomePage() {
   // "Dùng lại" từ trang Video đã tải điền sẵn link qua ?url= (job mới sẽ clone
   // file có sẵn thay vì tải lại).
   const [url, setUrl] = useState(() => searchParams.get("url") ?? "");
+  // Nguồn: dán link (mặc định) hoặc tải file local lên — vd video xuất sẵn
+  // từ Google Flow/Veo, ElevenLabs... không có API tải tự động.
+  const [sourceMode, setSourceMode] = useState<"url" | "file">("url");
+  const [file, setFile] = useState<File | null>(null);
   const [scriptMode, setScriptMode] = useState<ScriptMode>("translate");
   const [dynamicCaptions, setDynamicCaptions] = useState(false);
+  // Ghi chú định hướng tự do cho LLM — chỉ có tác dụng ở script_mode="visual"
+  const [userPrompt, setUserPrompt] = useState("");
   // 008-supervised-pipeline: mặc định TẮT — job chạy liền mạch như trước (FR-002)
   const [supervised, setSupervised] = useState(false);
   // 009-hardsub-blur-reposition: mặc định TẮT (FR-002)
@@ -99,21 +106,33 @@ export default function HomePage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (sourceMode === "file" && !file) {
+      setError("Chưa chọn file video để tải lên");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
+      // "visual" cũng lồng tiếng (giọng đọc sinh từ kịch bản LLM viết theo
+      // hình ảnh) nên cần giọng/khoảng giữ audio gốc như translate/rewrite.
+      const hasVoice =
+        scriptMode === "translate" || scriptMode === "rewrite" || scriptMode === "visual";
+      // Làm mờ phụ đề gốc (hardsub-blur) chỉ áp dụng translate/rewrite kèm
+      // phụ đề động — KHÔNG áp dụng "visual" (backend chưa hỗ trợ, pipeline.py
+      // chỉ trích khung hình khoanh vùng cho 2 mode này).
       const dubbing = scriptMode === "translate" || scriptMode === "rewrite";
       // 009 FR-009: tính năng chỉ có ý nghĩa khi thực sự có phụ đề hiển thị —
       // phụ đề tự động, hoặc lồng tiếng có bật phụ đề động. Không gửi cờ ở
       // các chế độ khác cho đỡ gây hiểu nhầm (cùng tinh thần FR-008 của 008).
       const hasSubtitleDisplay = scriptMode === "subtitle" || (dubbing && dynamicCaptions);
-      const { job_id } = await submitJob(
-        url,
+      const submitArgs = [
         scriptMode,
-        dubbing && dynamicCaptions,
-        dubbing ? selectedVoice?.provider : undefined,
-        dubbing ? selectedVoice?.voice_id : undefined,
-        dubbing && keepRanges.trim() ? keepRanges.trim() : undefined,
+        hasVoice && dynamicCaptions,
+        hasVoice ? selectedVoice?.provider : undefined,
+        hasVoice ? selectedVoice?.voice_id : undefined,
+        hasVoice && keepRanges.trim() ? keepRanges.trim() : undefined,
         // Chế độ "chỉ tải" không có bước tách lời/sinh kịch bản nên không có
         // chốt nào để dừng — không gửi cờ cho đỡ gây hiểu nhầm (FR-008)
         scriptMode !== "download" && supervised,
@@ -121,7 +140,16 @@ export default function HomePage() {
         hasSubtitleDisplay && hardsubBlurEnabled && hardsubNoRanges.trim()
           ? hardsubNoRanges.trim()
           : undefined,
-      );
+        // Chỉ áp dụng script_mode="visual" — mode khác không gửi, tránh gây
+        // hiểu nhầm là có tác dụng.
+        scriptMode === "visual" && userPrompt.trim() ? userPrompt.trim() : undefined,
+      ] as const;
+
+      const { job_id } =
+        sourceMode === "file"
+          ? await submitJobUpload(file as File, ...submitArgs)
+          : await submitJob(url, ...submitArgs);
+
       const detail = await getJob(job_id);
       setJob(detail);
       startPolling(job_id);
@@ -165,6 +193,10 @@ export default function HomePage() {
 
   const isBusy = job !== null && !TERMINAL_STATUSES.has(job.status);
   const isDubbing = scriptMode === "translate" || scriptMode === "rewrite";
+  // "visual" cũng lồng tiếng — hiện thẻ "Giọng đọc" + phụ đề động giống
+  // translate/rewrite, nhưng KHÔNG tính vào hardsub-blur (giữ isDubbing riêng
+  // cho hasSubtitleDisplay bên dưới, khớp đúng điều kiện backend hỗ trợ).
+  const hasVoice = isDubbing || scriptMode === "visual";
   const locked = isBusy || submitting;
   // 009 FR-009: chỉ chế độ có phụ đề hiển thị thật sự mới có gì để làm mờ/chèn đè
   const hasSubtitleDisplay = scriptMode === "subtitle" || (isDubbing && dynamicCaptions);
@@ -196,24 +228,74 @@ export default function HomePage() {
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio ref={audioRef} hidden />
 
-        <div className={`card${isDubbing ? "" : " home-layout__full"}`}>
+        <div className={`card${hasVoice ? "" : " home-layout__full"}`}>
           <span className="card__eyebrow">Nguồn</span>
+
           <div className="field">
-            <label className="field__label" htmlFor="video-url">
-              URL video
-            </label>
-            <input
-              id="video-url"
-              className="input"
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.tiktok.com/@user/video/..."
-              disabled={locked}
-              required
-            />
-            <span className="field__hint">Hỗ trợ TikTok, Douyin (không watermark) và YouTube.</span>
+            <div className="mode-grid">
+              <label className="mode-option">
+                <input
+                  type="radio"
+                  name="source-mode"
+                  checked={sourceMode === "url"}
+                  onChange={() => setSourceMode("url")}
+                  disabled={locked}
+                />
+                <span className="mode-option__body">
+                  <span className="mode-option__name">Dán link</span>
+                </span>
+              </label>
+              <label className="mode-option">
+                <input
+                  type="radio"
+                  name="source-mode"
+                  checked={sourceMode === "file"}
+                  onChange={() => setSourceMode("file")}
+                  disabled={locked}
+                />
+                <span className="mode-option__body">
+                  <span className="mode-option__name">Tải file lên</span>
+                </span>
+              </label>
+            </div>
           </div>
+
+          {sourceMode === "url" ? (
+            <div className="field">
+              <label className="field__label" htmlFor="video-url">
+                URL video
+              </label>
+              <input
+                id="video-url"
+                className="input"
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://www.tiktok.com/@user/video/..."
+                disabled={locked}
+                required
+              />
+              <span className="field__hint">Hỗ trợ TikTok, Douyin (không watermark) và YouTube.</span>
+            </div>
+          ) : (
+            <div className="field">
+              <label className="field__label" htmlFor="video-file">
+                File video
+              </label>
+              <input
+                id="video-file"
+                className="input"
+                type="file"
+                accept="video/*"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                disabled={locked}
+              />
+              <span className="field__hint">
+                Dùng cho video xuất sẵn từ nơi khác (vd Google Flow/Veo) không có URL công khai.
+                {file && ` Đã chọn: ${file.name}`}
+              </span>
+            </div>
+          )}
 
           <div className="field">
             <span className="field__label">Chế độ xử lý</span>
@@ -236,9 +318,30 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+
+          {scriptMode === "visual" && (
+            <div className="field">
+              <label className="field__label" htmlFor="user-prompt">
+                Prompt định hướng (tuỳ chọn)
+              </label>
+              <textarea
+                id="user-prompt"
+                className="input"
+                rows={3}
+                value={userPrompt}
+                onChange={(e) => setUserPrompt(e.target.value)}
+                placeholder="VD: nhấn mạnh tính năng chống nước, giọng điệu hài hước"
+                disabled={locked}
+                style={{ resize: "vertical", fontFamily: "inherit" }}
+              />
+              <span className="field__hint">
+                Ghi chú thêm để LLM viết kịch bản đúng hướng bạn muốn thay vì tự đoán.
+              </span>
+            </div>
+          )}
         </div>
 
-        {isDubbing && (
+        {hasVoice && (
           <div className="card">
             <span className="card__eyebrow">Giọng đọc</span>
             <div className="field">

@@ -7,7 +7,7 @@ export const TERMINAL_STATUSES = new Set(["done", "failed"]);
 // 10s), tránh WebSocket không cần thiết (002 research.md)
 export const POLL_INTERVAL_MS = 3000;
 
-export type ScriptMode = "translate" | "rewrite" | "subtitle" | "download";
+export type ScriptMode = "translate" | "rewrite" | "subtitle" | "visual" | "download";
 
 export const SCRIPT_MODES: {
   value: ScriptMode;
@@ -30,6 +30,11 @@ export const SCRIPT_MODES: {
     desc: "Giữ nguyên âm thanh gốc, chỉ thêm phụ đề",
   },
   {
+    value: "visual",
+    name: "Thuyết minh theo hình ảnh",
+    desc: "LLM xem video viết kịch bản khớp cảnh — cho video không có lời thoại (vd unbox)",
+  },
+  {
     value: "download",
     name: "Chỉ tải video",
     desc: "Tải video gốc về, không xử lý gì thêm",
@@ -40,6 +45,7 @@ export const SCRIPT_MODE_LABELS: Record<string, string> = {
   translate: "Dịch chuẩn (lồng tiếng)",
   rewrite: "Sáng tạo (lồng tiếng)",
   subtitle: "Phụ đề tự động (giữ âm thanh gốc)",
+  visual: "Thuyết minh theo hình ảnh (lồng tiếng)",
   download: "Chỉ tải video (không xử lý)",
 };
 
@@ -57,6 +63,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   tiktok: "TikTok",
   douyin: "Douyin",
   youtube: "YouTube",
+  upload: "Tải lên",
 };
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -74,6 +81,15 @@ export const STATUS_LABELS: Record<string, string> = {
   outlining: "Đang lên outline",
   sourcing_assets: "Đang tìm ảnh minh hoạ",
   rendering: "Đang dựng video",
+  // Script-to-video v3: premise → nhiều PHẦN (part), mỗi phần: kịch bản →
+  // duyệt → upload merge.mp4 → TTS → ghép. "pending"/"scripting"/
+  // "awaiting_review"/"synthesizing"/"merging"/"done"/"failed" đã dùng chung
+  // ở trên (cùng ý nghĩa, dùng lại nguyên nhãn — "merging" của dub cũng là
+  // "ghép giọng vào video"). "ready" là trạng thái CẤP DỰ ÁN (đã sinh xong
+  // kịch bản mọi phần, tiến trình tiếp theo nằm ở từng phần) — cố ý không
+  // trùng nghĩa "done".
+  ready: "Đã sinh kịch bản",
+  awaiting_upload: "Chờ tải video lên",
 };
 
 // 010-topic-video-generation: nhãn ngắn (dạng danh từ) cho dropdown "Chạy lại
@@ -86,12 +102,22 @@ export const GENERATE_STEP_LABELS: Record<string, string> = {
   rendering: "Dựng video",
 };
 
+// Script-to-video v3: nhãn ngắn cho dropdown "Chạy lại từ bước" của 1 PHẦN —
+// chỉ 2 bước cuối (synthesizing/merging), rerun "kịch bản" của riêng 1 phần
+// không hỗ trợ (có nguy cơ phá continuity với phần khác đã dựa vào bản cũ).
+export const SCRIPT_TO_VIDEO_PART_STEP_LABELS: Record<string, string> = {
+  synthesizing: "Giọng đọc",
+  merging: "Ghép giọng vào video",
+};
+
 // 008-supervised-pipeline: tên chốt hiển thị cho người dùng
 export const REVIEW_GATE_LABELS: Record<string, string> = {
   transcript: "chốt lời thoại",
   script: "chốt kịch bản",
   // 010-topic-video-generation
   outline: "chốt outline",
+  // script-to-video
+  script_to_video: "chốt kịch bản & prompt",
 };
 
 export type StatusKind = "running" | "waiting" | "done" | "failed";
@@ -102,11 +128,15 @@ export type StatusKind = "running" | "waiting" | "done" | "failed";
  * "waiting" (008) là nhóm RIÊNG: job chờ duyệt không đang xử lý (nó đã nhả suất
  * cho job khác) và cũng không lỗi — gộp vào "running" hay "failed" đều làm người
  * dùng hiểu sai việc cần làm (FR-006).
+ *
+ * "awaiting_upload" (script-to-video, theo phần) CŨNG thuộc nhóm "waiting"
+ * cùng lý do — phần đang chờ người dùng tự upload video, không phải hệ
+ * thống đang xử lý gì.
  */
 export function statusKind(status: string): StatusKind {
   if (status === "done") return "done";
   if (status === "failed") return "failed";
-  if (status === "awaiting_review") return "waiting";
+  if (status === "awaiting_review" || status === "awaiting_upload") return "waiting";
   return "running";
 }
 

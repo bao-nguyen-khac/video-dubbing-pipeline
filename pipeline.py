@@ -91,8 +91,13 @@ def create_job(
     supervised: bool = False,
     hardsub_blur_enabled: bool = False,
     hardsub_no_ranges: str | None = None,
+    user_prompt: str | None = None,
 ) -> dict:
     """Tạo job mới và ghi job.json vào jobs/{job_id}/.
+
+    user_prompt: chỉ có ý nghĩa khi script_mode="visual" — ghi chú định hướng
+    tự do để LLM bám theo khi viết kịch bản từ hình ảnh (vd "nhấn mạnh tính
+    năng chống nước"). Bị bỏ qua ở mọi script_mode khác.
 
     dynamic_captions (003-dubbing-fixes-subtitles, US4): chỉ có ý nghĩa khi
     script_mode là 'translate'/'rewrite'; không áp dụng với 'subtitle' (phụ
@@ -138,6 +143,8 @@ def create_job(
         # Khoảng thời gian giữ nguyên audio gốc (nhạc/tiếng hát), không lồng
         # tiếng đè — vd "0:15-0:30, 1:05-end". None/"" = lồng tiếng toàn bộ.
         "keep_original_ranges": keep_original_ranges,
+        # Ghi chú định hướng tự do cho LLM ở script_mode="visual" (None = không có)
+        "user_prompt": user_prompt,
         # 008-supervised-pipeline: chế độ quản lý pipeline (mặc định TẮT — FR-002)
         "supervised": supervised,
         # Chốt đang chờ duyệt: "transcript" | "script" | None. Chỉ khác None khi
@@ -461,18 +468,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--url",
-        required=True,
-        help="URL công khai từ TikTok, Douyin, hoặc YouTube",
+        default=None,
+        help=(
+            "URL công khai từ TikTok, Douyin, hoặc YouTube. Dùng ĐÚNG MỘT trong "
+            "hai: --url hoặc --file (không bắt buộc khi chỉ resume bằng --job-id)"
+        ),
+    )
+    parser.add_argument(
+        "--file",
+        dest="file",
+        default=None,
+        help=(
+            "Đường dẫn video local thay cho --url (vd video xuất sẵn từ Google "
+            "Flow/Veo, ElevenLabs không có API tải tự động) — job tạo ra có "
+            "platform='upload'. Dùng ĐÚNG MỘT trong hai: --url hoặc --file"
+        ),
+    )
+    parser.add_argument(
+        "--user-prompt",
+        dest="user_prompt",
+        default=None,
+        help=(
+            "Ghi chú định hướng tự do cho LLM khi --script-mode visual (vd "
+            "'nhấn mạnh tính năng chống nước'); bị bỏ qua với mode khác"
+        ),
     )
     parser.add_argument(
         "--script-mode",
         dest="script_mode",
         required=True,
-        choices=["translate", "rewrite", "subtitle", "download"],
+        choices=["translate", "rewrite", "subtitle", "visual", "download"],
         help=(
             "Chế độ xử lý: 'translate' (dịch lồng tiếng), 'rewrite' (tự soạn "
             "lồng tiếng), 'subtitle' (giữ nguyên âm thanh gốc, chỉ thêm phụ "
-            "đề), hoặc 'download' (chỉ tải video, không xử lý gì thêm)"
+            "đề), 'visual' (LLM xem hình ảnh video viết kịch bản khớp cảnh, "
+            "không dùng transcript — cho video không có lời thoại quan trọng "
+            "như video unbox), hoặc 'download' (chỉ tải video, không xử lý "
+            "gì thêm)"
         ),
     )
     parser.add_argument(
@@ -602,6 +634,8 @@ def run_pipeline(
     supervised: bool = False,
     hardsub_blur_enabled: bool = False,
     hardsub_no_ranges: str | None = None,
+    local_file_path: str | None = None,
+    user_prompt: str | None = None,
 ) -> None:
     """
     Điều phối pipeline end-to-end.
@@ -620,6 +654,14 @@ def run_pipeline(
     hardsub_blur_enabled/hardsub_no_ranges (009-hardsub-blur-reposition): cùng
     khuôn mẫu — chỉ là giá trị mặc định cho job tạo mới, giá trị dùng thật MUST
     đọc từ job.json (`active_hardsub_blur` bên dưới).
+
+    local_file_path: đường dẫn video local — CÓ nghĩa là nguồn "Tải file lên"
+    (platform="upload") thay vì tải từ `url`. Chỉ dùng lúc TẠO JOB MỚI (job_id
+    is None) hoặc khi job chưa tải xong; job đã có `jobs/{id}/source.mp4` bỏ
+    qua tham số này (xem Bước 1: Download).
+
+    user_prompt: chỉ là GIÁ TRỊ MẶC ĐỊNH cho job tạo mới (cùng khuôn mẫu
+    supervised/hardsub_blur_enabled) — job đã tồn tại đọc từ job.json.
     """
     # Lazy imports — tránh ImportError crash khi chạy --help
     from asr.transcriber import transcribe
@@ -633,6 +675,7 @@ def run_pipeline(
     from merge.text_renderer import render_cue_overlays
     from merge.vocal_separator import extract_background_music
     from script_gen.router_client import generate_script, generate_subtitle_script
+    from script_gen.visual_script_generator import generate_visual_script
     from tts.edge_tts_client import DEFAULT_VOICE
     from tts.segment_synthesizer import synthesize_segments
 
@@ -641,25 +684,36 @@ def run_pipeline(
         print("[ERROR] Môi trường chưa sẵn sàng, xem chi tiết ở trên.", file=sys.stderr)
         sys.exit(1)
 
-    # 1. Detect platform từ URL
-    try:
-        platform = detect_platform(url)
-    except ValueError as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
-        sys.exit(1)
+    # 1. Xác định platform: "upload" nếu có file local kèm theo (không suy từ
+    # URL), ngược lại detect từ URL như cũ. CHỈ suy luận khi TẠO JOB MỚI —
+    # resume (job_id có sẵn) đọc platform thẳng từ job.json (xem bước 2), vì
+    # detect_platform() sẽ ném lỗi nếu gọi lại với tên file thay vì URL thật.
+    if job_id is None:
+        if local_file_path:
+            platform = "upload"
+        else:
+            try:
+                platform = detect_platform(url)
+            except ValueError as e:
+                print(f"[ERROR] {e}", file=sys.stderr)
+                sys.exit(1)
 
     # 2. Khởi tạo / resume job
     if job_id:
         try:
             job = read_job(job_id)
             print(f"[pipeline] Resume job {job_id} (status={job['status']})")
-            # Nếu job chưa bắt đầu download và user truyền URL/platform khác lúc
-            # tạo job, đồng bộ lại job.json để tránh lưu source_url/platform cũ
-            if job["status"] == "pending" and (
-                job["source_url"] != url or job["platform"] != platform
+            platform = job["platform"]
+            # Nếu job chưa bắt đầu download và user truyền URL khác lúc tạo
+            # job, đồng bộ lại job.json để tránh lưu source_url cũ — KHÔNG áp
+            # dụng cho job "upload" (không có URL thật để so sánh lại,
+            # source_url chỉ là tên file hiển thị).
+            if (
+                job["status"] == "pending"
+                and platform != "upload"
+                and job["source_url"] != url
             ):
                 job["source_url"] = url
-                job["platform"] = platform
                 _write_job(job_id, job)
         except FileNotFoundError:
             print(f"[ERROR] Job không tồn tại: {job_id}", file=sys.stderr)
@@ -676,6 +730,7 @@ def run_pipeline(
                 supervised=supervised,
                 hardsub_blur_enabled=hardsub_blur_enabled,
                 hardsub_no_ranges=hardsub_no_ranges,
+                user_prompt=user_prompt,
             )
         except ValueError as e:
             print(f"[ERROR] {e}", file=sys.stderr)
@@ -709,60 +764,78 @@ def run_pipeline(
         print(f"[pipeline][{jid}] Bắt đầu downloading...")
         try:
             update_job_status(jid, "downloading")
-            import download_registry
-
             dest_path = job_dir / "source.mp4"
-            reuse = download_registry.lookup(url)
-            if reuse and not (dest_path.exists() and dest_path.stat().st_size > 0):
-                # Đã tải video này ở job trước → clone file, khỏi tải lại
-                shutil.copy2(reuse["source_video"], dest_path)
-                source_path = dest_path
-                print(
-                    f"[pipeline][{jid}] Tái dùng video đã tải "
-                    f"(job {reuse.get('job_id')}), clone thay vì tải lại"
-                )
-            else:
-                # Chọn client phù hợp theo platform
-                if platform in ("tiktok", "douyin"):
-                    source_path = download_video(url, job_dir, platform)
+
+            if platform == "upload":
+                # Nguồn "Tải file lên" — không có URL thật để tải/dedup qua
+                # download_registry, chỉ copy file local vào đúng chỗ pipeline
+                # mong đợi. Resume: file đã copy ở lượt chạy trước thì dùng
+                # luôn, không copy lại (local_file_path có thể không còn được
+                # truyền vào ở lượt resume — xem run_pipeline() docstring).
+                if dest_path.exists() and dest_path.stat().st_size > 0:
+                    source_path = dest_path
+                elif local_file_path and Path(local_file_path).exists():
+                    shutil.copy2(local_file_path, dest_path)
+                    source_path = dest_path
                 else:
+                    raise RuntimeError(
+                        "Job 'upload' thiếu file nguồn — không tìm thấy "
+                        f"{dest_path} lẫn local_file_path đã cung cấp"
+                    )
+            else:
+                import download_registry
+
+                reuse = download_registry.lookup(url)
+                if reuse and not (dest_path.exists() and dest_path.stat().st_size > 0):
+                    # Đã tải video này ở job trước → clone file, khỏi tải lại
+                    shutil.copy2(reuse["source_video"], dest_path)
+                    source_path = dest_path
+                    print(
+                        f"[pipeline][{jid}] Tái dùng video đã tải "
+                        f"(job {reuse.get('job_id')}), clone thay vì tải lại"
+                    )
+                else:
+                    # Chọn client phù hợp theo platform
+                    if platform in ("tiktok", "douyin"):
+                        source_path = download_video(url, job_dir, platform)
+                    else:
+                        from downloader.ytdlp_client import download_video_ytdlp
+                        source_path = download_video_ytdlp(url, job_dir)
+
+                # Sửa mất tiếng (TikTok/Douyin) — áp dụng cho CẢ file clone lẫn file
+                # mới tải: f2/yt-dlp hay lấy bản HEVC (bytevc1) tải về VIDEO-ONLY dù
+                # "khai" có aac; chỉ bản h264 mới có tiếng thật. File không có audio
+                # → tải lại ép h264. Vẫn câm = video thật sự không tiếng (slideshow)
+                # → để nguyên cho transcriber báo đúng.
+                from media_utils import has_audio_stream
+
+                if platform in ("tiktok", "douyin") and not has_audio_stream(source_path):
+                    print(
+                        f"[pipeline][{jid}] ⚠ Video không có tiếng (bản HEVC TikTok câm "
+                        f"hoặc clone từ file câm cũ), tải lại bằng yt-dlp bản h264..."
+                    )
                     from downloader.ytdlp_client import download_video_ytdlp
-                    source_path = download_video_ytdlp(url, job_dir)
 
-            # Sửa mất tiếng (TikTok/Douyin) — áp dụng cho CẢ file clone lẫn file
-            # mới tải: f2/yt-dlp hay lấy bản HEVC (bytevc1) tải về VIDEO-ONLY dù
-            # "khai" có aac; chỉ bản h264 mới có tiếng thật. File không có audio
-            # → tải lại ép h264. Vẫn câm = video thật sự không tiếng (slideshow)
-            # → để nguyên cho transcriber báo đúng.
-            from media_utils import has_audio_stream
+                    Path(dest_path).unlink(missing_ok=True)
+                    try:
+                        repaired = download_video_ytdlp(url, job_dir, prefer_audio=True)
+                        source_path = repaired
+                        if not has_audio_stream(source_path):
+                            print(f"[pipeline][{jid}] Bản h264 vẫn không có tiếng — video gốc không có âm thanh")
+                    except Exception as refetch_err:
+                        print(f"[pipeline][{jid}] Tải lại bản h264 thất bại: {refetch_err}")
+                        # Giữ lại file gì đó để bước sau báo lỗi rõ ràng
+                        if not Path(dest_path).exists():
+                            source_path = (
+                                download_video(url, job_dir, platform)
+                                if platform in ("tiktok", "douyin")
+                                else download_video_ytdlp(url, job_dir)
+                            )
 
-            if platform in ("tiktok", "douyin") and not has_audio_stream(source_path):
-                print(
-                    f"[pipeline][{jid}] ⚠ Video không có tiếng (bản HEVC TikTok câm "
-                    f"hoặc clone từ file câm cũ), tải lại bằng yt-dlp bản h264..."
-                )
-                from downloader.ytdlp_client import download_video_ytdlp
-
-                Path(dest_path).unlink(missing_ok=True)
-                try:
-                    repaired = download_video_ytdlp(url, job_dir, prefer_audio=True)
-                    source_path = repaired
-                    if not has_audio_stream(source_path):
-                        print(f"[pipeline][{jid}] Bản h264 vẫn không có tiếng — video gốc không có âm thanh")
-                except Exception as refetch_err:
-                    print(f"[pipeline][{jid}] Tải lại bản h264 thất bại: {refetch_err}")
-                    # Giữ lại file gì đó để bước sau báo lỗi rõ ràng
-                    if not Path(dest_path).exists():
-                        source_path = (
-                            download_video(url, job_dir, platform)
-                            if platform in ("tiktok", "douyin")
-                            else download_video_ytdlp(url, job_dir)
-                        )
-
-            # Ghi vào sổ để job sau tái dùng (chỉ ghi file CÓ tiếng — tránh lan
-            # file câm cũ; giữ nguồn gốc nếu sổ đã có entry file tốt)
-            if has_audio_stream(source_path) or platform not in ("tiktok", "douyin"):
-                download_registry.register(url, platform, source_path, jid)
+                # Ghi vào sổ để job sau tái dùng (chỉ ghi file CÓ tiếng — tránh lan
+                # file câm cũ; giữ nguồn gốc nếu sổ đã có entry file tốt)
+                if has_audio_stream(source_path) or platform not in ("tiktok", "douyin"):
+                    download_registry.register(url, platform, source_path, jid)
 
             print(f"[pipeline][{jid}] Download xong: {source_path}")
 
@@ -850,7 +923,15 @@ def run_pipeline(
 
             # ── Chốt 1: lời thoại (008, FR-004) ─────────────────────────────
             # `is_approved` là cái chặn dừng lại lần hai sau retry (FR-023).
-            if active_supervised and not gates.is_approved(job, gates.GATE_TRANSCRIPT):
+            # script_mode="visual" KHÔNG dùng transcript (kịch bản sinh từ hình
+            # ảnh) — chốt này luôn có 0 câu, dừng lại chỉ gây khó hiểu, nên bỏ
+            # qua hẳn, chốt duyệt duy nhất của mode này là "Chốt kịch bản" bên
+            # dưới (nơi nội dung LLM viết thật sự đáng xem trước khi tốn TTS).
+            if (
+                active_supervised
+                and script_mode != "visual"
+                and not gates.is_approved(job, gates.GATE_TRANSCRIPT)
+            ):
                 reviewed_path, count = _prepare_transcript_gate(jid, transcript_path, job_dir)
                 job = read_job(jid)
                 gates.mark_reached(job, gates.GATE_TRANSCRIPT, count)
@@ -895,6 +976,15 @@ def run_pipeline(
                 # US3: dịch theo segment (giữ mốc thời gian ASR gốc) thay vì
                 # dịch nguyên khối — không cần source_duration (không TTS)
                 script_path = generate_subtitle_script(transcript_for_script, job_dir)
+            elif script_mode == "visual":
+                # LLM (vision) tự chia cảnh + viết kịch bản từ hình ảnh,
+                # KHÔNG dùng transcript — bỏ qua transcript_for_script hoàn
+                # toàn, kể cả khi video không có lời thoại nào.
+                script_path = generate_visual_script(
+                    job["artifacts"]["source_video"],
+                    job_dir,
+                    user_prompt=job.get("user_prompt"),
+                )
             else:
                 # 005: ngân sách ký tự nay tính theo TỪNG nhịp từ mốc ASR bên
                 # trong generate_script() — không cần source_duration nữa
@@ -1164,8 +1254,21 @@ def run_pipeline(
 
 def main() -> None:
     args = parse_args()
+
+    if args.url and args.file:
+        print("[ERROR] Chỉ dùng MỘT trong hai: --url hoặc --file", file=sys.stderr)
+        sys.exit(1)
+    if not args.url and not args.file and not args.job_id:
+        print("[ERROR] Cần --url hoặc --file (trừ khi resume bằng --job-id)", file=sys.stderr)
+        sys.exit(1)
+
+    # --file mà không kèm --url: dùng tên file làm source_url hiển thị. Khi
+    # resume (--job-id, không có --url/--file), giá trị này bị bỏ qua — xem
+    # run_pipeline() (platform đọc thẳng từ job.json lúc resume).
+    url = args.url or (Path(args.file).name if args.file else "")
+
     run_pipeline(
-        url=args.url,
+        url=url,
         script_mode=args.script_mode,
         job_id=args.job_id,
         dynamic_captions=args.dynamic_captions,
@@ -1174,6 +1277,8 @@ def main() -> None:
         supervised=args.supervised,
         hardsub_blur_enabled=args.hardsub_blur_enabled,
         hardsub_no_ranges=args.hardsub_no_ranges,
+        local_file_path=args.file,
+        user_prompt=args.user_prompt,
     )
 
 
