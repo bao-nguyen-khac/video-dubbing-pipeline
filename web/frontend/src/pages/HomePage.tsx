@@ -14,7 +14,6 @@ import {
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
 import JobProgress from "../components/JobProgress";
-import StudioTabs from "../components/StudioTabs";
 import VideoDropzone from "../components/VideoDropzone";
 import VoiceSelector from "../components/VoiceSelector";
 import { IconDownload, IconSparkles } from "../components/Icon";
@@ -167,13 +166,11 @@ export default function HomePage() {
   return (
     <AppShell>
       <div className="page-head">
-        <h1>Studio Sáng tạo Video</h1>
+        <h1>Lồng tiếng &amp; Tái tạo Video</h1>
         <p className="page-head__lead">
           Tải video, tách lời, viết kịch bản tiếng Việt bằng AI và lồng tiếng khớp nhịp với bản gốc.
         </p>
       </div>
-
-      <StudioTabs />
 
       <form onSubmit={handleSubmit} className="home-layout">
         <div className={`card${hasVoice ? "" : " home-layout__full"}`}>

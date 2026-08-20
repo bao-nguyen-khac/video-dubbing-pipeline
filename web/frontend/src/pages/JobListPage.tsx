@@ -1,15 +1,11 @@
-// pages/JobListPage.tsx — Lịch sử & Quản lý Job với Search, Status Filters, và Stats Banner
+// pages/JobListPage.tsx — Lịch sử & Quản lý Job Lồng tiếng Video
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   deleteJob,
-  listGenerateJobs,
   listJobs,
-  listScriptToVideoJobs,
   pinJob,
-  type GenerateJobSummary,
   type JobSummary,
-  type ScriptToVideoJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
@@ -67,49 +63,8 @@ function JobRow({
   );
 }
 
-function GenerateJobRow({ job }: { job: GenerateJobSummary }) {
-  return (
-    <Link to={`/generate?job=${job.job_id}`} className="job-row" title={job.topic}>
-      <span className="job-row__url">{job.topic}</span>
-      <div className="job-row__meta">
-        <span className="badge badge--tag">Tạo từ chủ đề</span>
-        <span>·</span>
-        <span title={absoluteTime(job.created_at)}>{relativeTime(job.created_at)}</span>
-      </div>
-      <div className="job-row__status">
-        <StatusBadge status={job.status} reviewGate={job.review_gate} />
-      </div>
-    </Link>
-  );
-}
-
-function ScriptToVideoJobRow({ job }: { job: ScriptToVideoJobSummary }) {
-  return (
-    <Link to={`/script-to-video?project=${job.slug}`} className="job-row" title={job.premise}>
-      <span className="job-row__url">{job.premise}</span>
-      <div className="job-row__meta">
-        <span className="badge badge--tag">Script-to-video</span>
-        <span>·</span>
-        <span>{job.parts_done}/{job.parts_total} phần hoàn thành</span>
-        <span>·</span>
-        <span title={absoluteTime(job.created_at)}>{relativeTime(job.created_at)}</span>
-      </div>
-      <div className="job-row__status">
-        <StatusBadge status={job.status} reviewGate={job.review_gate} />
-      </div>
-    </Link>
-  );
-}
-
-type UnifiedJob =
-  | { kind: "dub"; job: JobSummary }
-  | { kind: "generate"; job: GenerateJobSummary }
-  | { kind: "script_to_video"; job: ScriptToVideoJobSummary };
-
 export default function JobListPage() {
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
-  const [generateJobs, setGenerateJobs] = useState<GenerateJobSummary[] | null>(null);
-  const [scriptToVideoJobs, setScriptToVideoJobs] = useState<ScriptToVideoJobSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -120,14 +75,8 @@ export default function JobListPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [dubRes, generateRes, scriptToVideoRes] = await Promise.all([
-        listJobs(),
-        listGenerateJobs(),
-        listScriptToVideoJobs(),
-      ]);
+      const dubRes = await listJobs();
       setJobs(dubRes.jobs);
-      setGenerateJobs(generateRes.jobs);
-      setScriptToVideoJobs(scriptToVideoRes.jobs);
     } catch {
       setError("Không tải được danh sách job");
     }
@@ -172,75 +121,61 @@ export default function JobListPage() {
     }
   }
 
-  const loaded = jobs !== null && generateJobs !== null && scriptToVideoJobs !== null;
-
-  // Unified list of all jobs
-  const allUnifiedJobs: UnifiedJob[] = useMemo(() => {
-    if (!loaded) return [];
-    return [
-      ...(jobs ?? []).map((j): UnifiedJob => ({ kind: "dub", job: j })),
-      ...(generateJobs ?? []).map((j): UnifiedJob => ({ kind: "generate", job: j })),
-      ...(scriptToVideoJobs ?? []).map((j): UnifiedJob => ({ kind: "script_to_video", job: j })),
-    ];
-  }, [loaded, jobs, generateJobs, scriptToVideoJobs]);
+  const loaded = jobs !== null;
 
   // Quick stats
   const stats = useMemo(() => {
-    const total = allUnifiedJobs.length;
+    const total = jobs?.length ?? 0;
     let waiting = 0;
     let done = 0;
     let failed = 0;
     let running = 0;
 
-    allUnifiedJobs.forEach((item) => {
-      const st = item.job.status;
+    (jobs ?? []).forEach((item) => {
+      const st = item.status;
       if (st === "done" || st === "ready") done++;
       else if (st === "failed") failed++;
-      else if (st === "awaiting_review" || st === "awaiting_upload") waiting++;
+      else if (st === "awaiting_review") waiting++;
       else running++;
     });
 
     return { total, waiting, done, failed, running };
-  }, [allUnifiedJobs]);
+  }, [jobs]);
 
   // Filtered and searched list
   const filteredJobs = useMemo(() => {
-    return allUnifiedJobs.filter((item) => {
+    return (jobs ?? []).filter((item) => {
       // Search term match
-      let searchTarget = "";
-      if (item.kind === "dub") searchTarget = `${item.job.source_url} ${item.job.job_id}`;
-      else if (item.kind === "generate") searchTarget = `${item.job.topic} ${item.job.job_id}`;
-      else if (item.kind === "script_to_video") searchTarget = `${item.job.premise} ${item.job.slug}`;
-
+      const searchTarget = `${item.source_url} ${item.job_id}`;
       const matchSearch = !search.trim() || searchTarget.toLowerCase().includes(search.toLowerCase());
 
       // Status match
       let matchStatus = true;
-      const st = item.job.status;
+      const st = item.status;
       if (statusFilter === "pinned") {
-        matchStatus = item.kind === "dub" && !!item.job.pinned;
+        matchStatus = !!item.pinned;
       } else if (statusFilter === "waiting") {
-        matchStatus = st === "awaiting_review" || st === "awaiting_upload";
+        matchStatus = st === "awaiting_review";
       } else if (statusFilter === "done") {
         matchStatus = st === "done" || st === "ready";
       } else if (statusFilter === "failed") {
         matchStatus = st === "failed";
       } else if (statusFilter === "running") {
-        matchStatus = st !== "done" && st !== "ready" && st !== "failed" && st !== "awaiting_review" && st !== "awaiting_upload";
+        matchStatus = st !== "done" && st !== "ready" && st !== "failed" && st !== "awaiting_review";
       }
 
       return matchSearch && matchStatus;
     });
-  }, [allUnifiedJobs, search, statusFilter]);
+  }, [jobs, search, statusFilter]);
 
   const pinned = useMemo(() => {
-    return filteredJobs.filter((item) => item.kind === "dub" && item.job.pinned);
+    return filteredJobs.filter((item) => item.pinned);
   }, [filteredJobs]);
 
   const rest = useMemo(() => {
     return filteredJobs
-      .filter((item) => !(item.kind === "dub" && item.job.pinned))
-      .sort((a, b) => b.job.created_at.localeCompare(a.job.created_at));
+      .filter((item) => !item.pinned)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [filteredJobs]);
 
   return (
@@ -248,7 +183,7 @@ export default function JobListPage() {
       <div className="page-head">
         <h1>Lịch sử &amp; Quản lý Job</h1>
         <p className="page-head__lead">
-          Theo dõi tiến trình, kiểm duyệt và quản lý toàn bộ video đã xử lý trên hệ thống.
+          Theo dõi tiến trình, kiểm duyệt và quản lý toàn bộ video lồng tiếng đã xử lý trên hệ thống.
         </p>
       </div>
 
@@ -286,7 +221,7 @@ export default function JobListPage() {
           <input
             type="text"
             className="input job-search-input"
-            placeholder="Tìm theo URL, chủ đề, kịch bản, ID..."
+            placeholder="Tìm theo URL, ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -390,9 +325,9 @@ export default function JobListPage() {
               <div className="job-list">
                 {pinned.map((item) => (
                   <JobRow
-                    key={(item.job as JobSummary).job_id}
-                    job={item.job as JobSummary}
-                    busy={busyId === (item.job as JobSummary).job_id}
+                    key={item.job_id}
+                    job={item}
+                    busy={busyId === item.job_id}
                     onPin={handlePin}
                     onDelete={handleDelete}
                   />
@@ -404,23 +339,15 @@ export default function JobListPage() {
           <div className="card">
             {pinned.length > 0 && <span className="card__eyebrow">Danh sách ({rest.length})</span>}
             <div className="job-list">
-              {rest.map((item) => {
-                if (item.kind === "dub") {
-                  return (
-                    <JobRow
-                      key={item.job.job_id}
-                      job={item.job}
-                      busy={busyId === item.job.job_id}
-                      onPin={handlePin}
-                      onDelete={handleDelete}
-                    />
-                  );
-                }
-                if (item.kind === "generate") {
-                  return <GenerateJobRow key={item.job.job_id} job={item.job} />;
-                }
-                return <ScriptToVideoJobRow key={item.job.slug} job={item.job} />;
-              })}
+              {rest.map((item) => (
+                <JobRow
+                  key={item.job_id}
+                  job={item}
+                  busy={busyId === item.job_id}
+                  onPin={handlePin}
+                  onDelete={handleDelete}
+                />
+              ))}
             </div>
           </div>
         </>

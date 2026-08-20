@@ -1,8 +1,8 @@
 // components/AppShell.tsx — Khung ứng dụng: Brand + Điều hướng + Theme Toggle + Thông báo + Logout
 import { useState, useEffect, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { logout } from "../api/client";
-import { IconBell, IconFilm, IconInbox, IconLogout, IconShare, IconWave } from "./Icon";
+import { IconBell, IconFilm, IconInbox, IconLogout, IconVideo, IconWave } from "./Icon";
 import ThemeToggle from "./ThemeToggle";
 import { useToast } from "../context/ToastContext";
 
@@ -14,7 +14,6 @@ type Props = {
 
 export default function AppShell({ children, narrow = false }: Props) {
   const navigate = useNavigate();
-  const location = useLocation();
   const toast = useToast();
   const [notificationState, setNotificationState] = useState<NotificationPermission>("default");
 
@@ -45,11 +44,6 @@ export default function AppShell({ children, narrow = false }: Props) {
     navigate("/login");
   }
 
-  const isStudioActive =
-    location.pathname === "/" ||
-    location.pathname.startsWith("/generate") ||
-    location.pathname.startsWith("/script-to-video");
-
   return (
     <>
       <header className="app-header">
@@ -60,31 +54,24 @@ export default function AppShell({ children, narrow = false }: Props) {
             </span>
             <span className="brand__text">
               <span>Video Studio</span>
-              <span className="brand__sub">Tái tạo &amp; Sáng tạo video AI</span>
+              <span className="brand__sub">Lồng tiếng &amp; Tái tạo video AI</span>
             </span>
           </Link>
 
           <nav className="app-nav">
-            <NavLink
-              to="/"
-              className={`nav-link ${isStudioActive ? "nav-link--active" : ""}`}
-            >
+            <NavLink to="/" className="nav-link" end>
               <IconFilm size={15} />
-              <span>Studio</span>
+              <span>Lồng tiếng</span>
             </NavLink>
 
             <NavLink to="/jobs" className="nav-link">
               <IconInbox size={15} />
-              <span>Lịch sử</span>
+              <span>Lịch sử job</span>
             </NavLink>
 
             <NavLink to="/downloads" className="nav-link">
-              <span>Video đã tải</span>
-            </NavLink>
-
-            <NavLink to="/publish" className="nav-link">
-              <IconShare size={15} />
-              <span>Đăng video</span>
+              <IconVideo size={15} />
+              <span>Tải hàng loạt</span>
             </NavLink>
           </nav>
 
@@ -121,9 +108,9 @@ export default function AppShell({ children, narrow = false }: Props) {
 
       <footer className="app-footer">
         <div className="app-footer__inner">
-          <span>AI Video Generation &amp; Supervised Dubbing Studio</span>
+          <span>AI Video Dubbing Studio</span>
           <span>·</span>
-          <span>Tách lời → Viết kịch bản tiếng Việt → Lồng tiếng khớp nhịp → Ghép video &amp; Đăng tự động</span>
+          <span>Tách lời → Viết kịch bản tiếng Việt → Lồng tiếng khớp nhịp → Ghép video &amp; Phụ đề</span>
         </div>
       </footer>
     </>
