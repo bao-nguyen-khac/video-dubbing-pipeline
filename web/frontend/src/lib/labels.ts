@@ -284,3 +284,29 @@ export const PUBLISH_ATTEMPT_STATUS_LABELS: Record<string, string> = {
   failed: "Thất bại",
   cancelled: "Đã huỷ",
 };
+
+export function voiceKey(v: { provider: string; voice_id: string }) {
+  return `${v.provider}|${v.voice_id}`;
+}
+
+export function inferVoiceTags(name: string, _provider?: string): { gender?: "Nam" | "Nữ"; region?: string } {
+  const lower = name.toLowerCase();
+  let gender: "Nam" | "Nữ" | undefined;
+  if (lower.includes("nữ") || lower.includes("female") || lower.includes("mai") || lower.includes("ngọc") || lower.includes("trang")) {
+    gender = "Nữ";
+  } else if (lower.includes("nam") || lower.includes("male") || lower.includes("khánh") || lower.includes("minh") || lower.includes("hùng")) {
+    gender = "Nam";
+  }
+
+  let region: string | undefined;
+  if (lower.includes("bắc") || lower.includes("hà nội") || lower.includes("northern")) {
+    region = "Miền Bắc";
+  } else if (lower.includes("nam") || lower.includes("sài gòn") || lower.includes("southern")) {
+    region = "Miền Nam";
+  } else if (lower.includes("trung") || lower.includes("huế") || lower.includes("đà nẵng")) {
+    region = "Miền Trung";
+  }
+
+  return { gender, region };
+}
+

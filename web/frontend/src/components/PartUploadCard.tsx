@@ -1,15 +1,10 @@
-// components/PartUploadCard.tsx — ô upload video ĐÃ TỰ NỐI cho 1 PHẦN (part)
-// của dự án script-to-video — người dùng tự tạo clip từng screen ở Google
-// Flow bằng prompt đã duyệt, TỰ NỐI LẠI thành 1 file, rồi upload lại đây
-// (khác v2: không còn 1 ô upload / screen).
-//
-// Input file thô modeled theo HomePage.tsx (chưa có dropzone component nào
-// trong repo) + uploadRequest() convention của api/client.ts.
-
+// components/PartUploadCard.tsx — Ô upload video cho 1 phần của script-to-video với VideoDropzone
 import { useState } from "react";
-import { ApiError, uploadPartVideo, type ScriptToVideoPartSummary } from "../api/client";
+import { uploadPartVideo, type ScriptToVideoPartSummary } from "../api/client";
 import { IconCheck } from "./Icon";
 import { confirm } from "../lib/confirm";
+import VideoDropzone from "./VideoDropzone";
+import { useToast } from "../context/ToastContext";
 
 export default function PartUploadCard({
   slug,
@@ -22,35 +17,38 @@ export default function PartUploadCard({
   disabled?: boolean;
   onUploaded: () => void;
 }) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const uploaded = part.status !== "awaiting_upload";
+  const toast = useToast();
 
-  async function handleFile(file: File | null) {
+  async function handleUpload(file: File | null) {
     if (!file) return;
     if (uploaded) {
       const ok = await confirm({
         title: "Thay video đã upload?",
-        message: `Phần ${part.index + 1} đã có video — upload file mới sẽ THAY THẾ file cũ (chỉ áp dụng khi phần đang chờ upload).`,
+        message: `Phần ${part.index + 1} đã có video — upload file mới sẽ THAY THẾ file cũ.`,
         confirmLabel: "Thay video",
         tone: "danger",
       });
       if (!ok) return;
     }
-    setError(null);
+
     setUploading(true);
     try {
       await uploadPartVideo(slug, part.index, file);
+      toast.success(`Đã tải lên video cho Phần ${part.index + 1}!`);
+      setSelectedFile(null);
       onUploaded();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Upload thất bại");
+    } catch {
+      toast.error("Tải lên video thất bại!");
     } finally {
       setUploading(false);
     }
   }
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <strong>
           Phần {part.index + 1}
@@ -62,37 +60,26 @@ export default function PartUploadCard({
           </span>
         )}
       </div>
+
       <span className="page-head__lead" style={{ margin: 0 }}>
-        {part.screen_count} screen · tự tạo clip từng screen ở Google Flow rồi nối lại thành 1 file
-        trước khi upload.
+        {part.screen_count} screen · Tự tạo clip từng screen ở Google Flow/Veo rồi nối lại thành 1 file trước khi upload.
       </span>
 
-      <div className="field">
-        <input
-          type="file"
-          className="input"
-          accept="video/*"
-          disabled={disabled || uploading}
-          onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            handleFile(file);
-            e.target.value = "";
-          }}
-        />
-        <span className="field__hint">
-          {uploading
-            ? "Đang tải lên..."
+      <VideoDropzone
+        file={selectedFile}
+        onFileChange={(f) => {
+          setSelectedFile(f);
+          if (f) handleUpload(f);
+        }}
+        disabled={disabled || uploading}
+        hint={
+          uploading
+            ? "Đang tải video lên server..."
             : uploaded
-              ? "Đã upload — chọn file khác để THAY THẾ (vd sửa nhầm file)."
-              : "Chọn video đã tự nối cho phần này."}
-        </span>
-      </div>
-
-      {error && (
-        <span className="field__hint" style={{ color: "var(--danger)" }}>
-          {error}
-        </span>
-      )}
+              ? "Kéo thả file mới để thay thế video hiện tại"
+              : "Kéo thả file video đã nối cho phần này"
+        }
+      />
     </div>
   );
 }

@@ -1,14 +1,8 @@
-// components/ScriptPromptReviewPanel.tsx — Bảng review kịch bản + prompt tại
-// chốt "script_to_video" cho 1 PHẦN (part) của dự án script-to-video.
-//
-// Sibling của ReviewGatePanel.tsx (KHÔNG tái dùng): payload/schema khác hẳn —
-// mỗi screen có 6 trường sửa được thay vì 1 trường "text" như chốt
-// transcript/script/outline. Vẫn giữ ĐÚNG flow load/dirty-tracking/
-// save/approve/confirm của ReviewGatePanel.
+// components/ScriptPromptReviewPanel.tsx — Bảng review kịch bản + prompt tại chốt "script_to_video"
+// Tích hợp: Screen Timeline Tabs + 2 Cột Visual vs Audio + 1-Click Copy Prompt với Toast feedback.
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  ApiError,
   approveScriptToVideoReview,
   getScriptToVideoReview,
   saveScriptToVideoReview,
@@ -16,7 +10,9 @@ import {
   type ScriptToVideoReviewPayload,
 } from "../api/client";
 import Callout from "../components/Callout";
+import { IconCheck, IconCopy, IconFilm, IconSparkles } from "./Icon";
 import { confirm } from "../lib/confirm";
+import { useToast } from "../context/ToastContext";
 
 type TextField = "role_label" | "ingredients_used" | "prompt_detail_md" | "visual_prompt" | "vi_voiceover_text";
 const TEXT_FIELDS: { key: TextField; label: string; rows: number }[] = [
@@ -24,7 +20,7 @@ const TEXT_FIELDS: { key: TextField; label: string; rows: number }[] = [
   { key: "role_label", label: "Vai trò screen (mô tả ngắn)", rows: 1 },
   { key: "ingredients_used", label: "Ingredients dùng cho screen này", rows: 1 },
   { key: "visual_prompt", label: "Visual Prompt (tiếng Anh, dán thẳng vào Google Flow)", rows: 4 },
-  { key: "prompt_detail_md", label: "Ghi chú chi tiết (nối cảnh/nhịp — markdown)", rows: 6 },
+  { key: "prompt_detail_md", label: "Ghi chú chi tiết (nối cảnh/nhịp — markdown)", rows: 4 },
 ];
 
 type ScreenEdits = Record<TextField, string> & { duration_seconds: number };
@@ -42,9 +38,11 @@ export default function ScriptPromptReviewPanel({
 }) {
   const [payload, setPayload] = useState<ScriptToVideoReviewPayload | null>(null);
   const [edits, setEdits] = useState<Record<number, ScreenEdits>>({});
+  const [activeScreenIndex, setActiveScreenIndex] = useState<number>(0);
+  const [viewMode, setViewMode] = useState<"tab" | "all">("tab");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "approve" | null>(null);
+  const toast = useToast();
 
   async function load() {
     setError(null);
@@ -66,8 +64,8 @@ export default function ScriptPromptReviewPanel({
           ]),
         ),
       );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Không tải được nội dung chốt");
+    } catch {
+      setError("Không tải được nội dung chốt kịch bản & prompt");
     }
   }
 
@@ -90,30 +88,26 @@ export default function ScriptPromptReviewPanel({
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
-  useEffect(() => {
-    if (!dirty) return;
-    function warn(e: BeforeUnloadEvent) {
-      e.preventDefault();
-      e.returnValue = "";
-    }
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
-
   function changedText(index: number, field: TextField, value: string) {
-    setNotice(null);
     setEdits((prev) => ({ ...prev, [index]: { ...prev[index], [field]: value } }));
   }
 
   function changedDuration(index: number, value: number) {
-    setNotice(null);
     setEdits((prev) => ({ ...prev, [index]: { ...prev[index], duration_seconds: value } }));
+  }
+
+  async function copyPrompt(screenIndex: number, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.copy(`Đã sao chép Visual Prompt của Screen ${screenIndex + 1}!`);
+    } catch {
+      toast.error("Không sao chép được vào clipboard");
+    }
   }
 
   async function handleSave() {
     if (!payload) return;
     setError(null);
-    setNotice(null);
     setBusy("save");
     try {
       const changedEdits: ScriptToVideoReviewEdit[] = payload.screens
@@ -130,11 +124,13 @@ export default function ScriptPromptReviewPanel({
           }
           return edit;
         });
+
       const res = await saveScriptToVideoReview(slug, partIndex, changedEdits);
-      setNotice(`Đã lưu ${res.saved_count} screen.`);
+      toast.success(`Đã lưu ${res.saved_count} screen thành công!`);
       await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Lưu thất bại");
+    } catch {
+      setError("Lưu kịch bản thất bại");
+      toast.error("Lưu thất bại!");
     } finally {
       setBusy(null);
     }
@@ -152,17 +148,14 @@ export default function ScriptPromptReviewPanel({
       if (!ok) return;
     }
     setError(null);
-    setNotice(null);
     setBusy("approve");
     try {
       await approveScriptToVideoReview(slug, partIndex);
+      toast.success("Đã phê duyệt kịch bản! Hãy mang prompt đi tạo clip.");
       onApproved();
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? `${err.message}${err.status === 409 ? " (chờ dự án kia xong rồi bấm lại)" : ""}`
-          : "Phê duyệt thất bại",
-      );
+    } catch {
+      setError("Phê duyệt thất bại");
+      toast.error("Phê duyệt thất bại!");
     } finally {
       setBusy(null);
     }
@@ -172,9 +165,7 @@ export default function ScriptPromptReviewPanel({
     return (
       <div className="card">
         {error ? (
-          <Callout tone="error" title="Không tải được nội dung chốt">
-            {error}
-          </Callout>
+          <Callout tone="error" title="Không tải được nội dung">{error}</Callout>
         ) : (
           <div className="skeleton skeleton--row" />
         )}
@@ -182,95 +173,226 @@ export default function ScriptPromptReviewPanel({
     );
   }
 
+  const activeScreen = payload.screens.find((s) => s.index === activeScreenIndex) ?? payload.screens[0];
+
   return (
-    <div className="card">
-      <div className="card__title">
-        <h2>
-          Chờ duyệt — Phần {partIndex + 1}{payload.title ? `: "${payload.title}"` : ""}
-        </h2>
+    <div className="card s2v-review-panel">
+      <div className="review-panel__header">
+        <div className="card__title" style={{ margin: 0 }}>
+          <h2>Chờ duyệt: Phần {partIndex + 1}{payload.title ? ` · "${payload.title}"` : ""}</h2>
+        </div>
+        <div className="review-panel__badges">
+          <span className="badge badge--waiting">{payload.screens.length} Screens</span>
+          {dirty && <span className="badge badge--running">Có thay đổi chưa lưu</span>}
+        </div>
       </div>
 
-      <p className="page-head__lead">
-        Sửa lại lời thoại/prompt từng screen nếu cần rồi phê duyệt. Sau khi phê duyệt, mang
-        Visual Prompt (tiếng Anh) đi tạo video ở Google Flow, tự nối các clip lại thành 1 file
-        rồi quay lại upload. Không sửa được sau khi đã phê duyệt.
+      <p className="page-head__lead" style={{ marginTop: "0.5rem" }}>
+        Kiểm tra Visual Prompt (dán vào Google Flow/Veo) và Lời thoại tiếng Việt. Sau khi phê duyệt, mang prompt đi sinh clip rồi nối lại thành 1 file upload.
       </p>
 
       {payload.continuity_notes.length > 0 && (
-        <details style={{ marginBottom: "0.75rem" }}>
-          <summary>Continuity chain ({payload.continuity_notes.length} mục — chỉ xem)</summary>
-          <ul style={{ marginTop: "0.5rem" }}>
+        <details className="continuity-bar" style={{ marginTop: "0.8rem", marginBottom: "0.8rem" }}>
+          <summary>
+            <IconSparkles size={14} />
+            <span>Continuity chain ({payload.continuity_notes.length} ghi chú nhất quán)</span>
+          </summary>
+          <ul className="continuity-list">
             {payload.continuity_notes.map((note, i) => (
-              <li key={i} className="page-head__lead">
-                {note}
-              </li>
+              <li key={i}>{note}</li>
             ))}
           </ul>
         </details>
       )}
 
-      {error && (
-        <Callout tone="error" title="Không thực hiện được">
-          {error}
-        </Callout>
-      )}
-      {notice && <Callout tone="success">{notice}</Callout>}
+      {error && <Callout tone="error" title="Lỗi">{error}</Callout>}
 
-      <div className="review-list">
-        {payload.screens.map((screen) => (
-          <div className="card" key={screen.index} style={{ marginBottom: "1rem" }}>
-            <div className="card__title">
-              <h3 style={{ margin: 0 }}>Screen {screen.index + 1}</h3>
-            </div>
-            <div className="field" style={{ marginTop: "0.6rem", maxWidth: "10rem" }}>
-              <label className="field__label" htmlFor={`s2v-${screen.index}-duration`}>
-                Thời lượng (giây)
-              </label>
-              <input
-                id={`s2v-${screen.index}-duration`}
-                type="number"
-                className="input"
-                min={1}
-                value={edits[screen.index]?.duration_seconds ?? screen.duration_seconds}
-                onChange={(e) => changedDuration(screen.index, Number(e.target.value))}
-              />
-            </div>
-            {TEXT_FIELDS.map((f) => (
-              <div className="field" key={f.key} style={{ marginTop: "0.6rem" }}>
-                <label className="field__label" htmlFor={`s2v-${screen.index}-${f.key}`}>
-                  {f.label}
-                </label>
-                <textarea
-                  id={`s2v-${screen.index}-${f.key}`}
-                  className="input"
-                  rows={f.rows}
-                  style={{ resize: "vertical", fontFamily: f.key === "prompt_detail_md" ? "monospace" : "inherit" }}
-                  value={edits[screen.index]?.[f.key] ?? ""}
-                  onChange={(e) => changedText(screen.index, f.key, e.target.value)}
-                />
+      {/* Screen Timeline Bar & View Mode Toggle */}
+      <div className="screen-timeline-header">
+        <div className="screen-tabs-bar">
+          {payload.screens.map((screen) => {
+            const isActive = viewMode === "tab" && activeScreenIndex === screen.index;
+            return (
+              <button
+                key={screen.index}
+                type="button"
+                className={`screen-tab-btn ${isActive ? "screen-tab-btn--active" : ""}`}
+                onClick={() => {
+                  setActiveScreenIndex(screen.index);
+                  setViewMode("tab");
+                }}
+              >
+                <span className="screen-tab-btn__num">#{screen.index + 1}</span>
+                <span className="screen-tab-btn__dur">{edits[screen.index]?.duration_seconds ?? screen.duration_seconds}s</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="screen-view-toggle">
+          <button
+            type="button"
+            className={`btn btn--subtle btn--sm ${viewMode === "tab" ? "btn--ghost" : ""}`}
+            onClick={() => setViewMode("tab")}
+          >
+            Từng Screen
+          </button>
+          <button
+            type="button"
+            className={`btn btn--subtle btn--sm ${viewMode === "all" ? "btn--ghost" : ""}`}
+            onClick={() => setViewMode("all")}
+          >
+            Tất cả ({payload.screens.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Screen Card Content */}
+      <div className="screen-cards-container">
+        {(viewMode === "tab" ? [activeScreen] : payload.screens).map((screen) => {
+          if (!screen) return null;
+          const e = edits[screen.index] ?? {
+            duration_seconds: screen.duration_seconds,
+            role_label: screen.role_label,
+            ingredients_used: screen.ingredients_used,
+            prompt_detail_md: screen.prompt_detail_md,
+            visual_prompt: screen.visual_prompt,
+            vi_voiceover_text: screen.vi_voiceover_text,
+          };
+
+          return (
+            <div key={screen.index} className="screen-card">
+              <div className="screen-card__header">
+                <div className="screen-card__title">
+                  <IconFilm size={16} />
+                  <span>Screen {screen.index + 1}</span>
+                  {e.role_label && <span className="badge badge--tag">{e.role_label}</span>}
+                </div>
+
+                <div className="screen-card__meta">
+                  <label className="screen-card__duration-label">
+                    <span>Thời lượng:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      className="input mono"
+                      style={{ width: "4.5rem", padding: "0.25rem 0.5rem" }}
+                      value={e.duration_seconds}
+                      onChange={(ev) => changedDuration(screen.index, Number(ev.target.value))}
+                    />
+                    <span>giây</span>
+                  </label>
+                </div>
               </div>
-            ))}
-          </div>
-        ))}
+
+              <div className="screen-card__grid">
+                {/* Cột trái: Visual Prompt (EN) */}
+                <div className="screen-card__col screen-card__col--visual">
+                  <div className="field">
+                    <div className="field__label-row">
+                      <label className="field__label" htmlFor={`vp-${screen.index}`}>
+                        🎨 Visual Prompt (Google Flow / Veo)
+                      </label>
+                      <button
+                        type="button"
+                        className="btn btn--subtle btn--sm copy-prompt-btn"
+                        onClick={() => copyPrompt(screen.index, e.visual_prompt)}
+                        title="Sao chép prompt này"
+                      >
+                        <IconCopy size={13} />
+                        <span>Sao chép Prompt</span>
+                      </button>
+                    </div>
+                    <textarea
+                      id={`vp-${screen.index}`}
+                      className="input mono"
+                      rows={4}
+                      value={e.visual_prompt}
+                      onChange={(ev) => changedText(screen.index, "visual_prompt", ev.target.value)}
+                      placeholder="Prompt tiếng Anh cho AI Video..."
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label className="field__label" htmlFor="s2v-role-label">Vai trò cảnh &amp; Ingredients</label>
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                      <input
+                        id="s2v-role-label"
+                        className="input"
+                        placeholder="Vai trò screen (VD: Hook mở đầu)"
+                        value={e.role_label}
+                        onChange={(ev) => changedText(screen.index, "role_label", ev.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <input
+                        className="input mono"
+                        placeholder="Ingredients used"
+                        value={e.ingredients_used}
+                        onChange={(ev) => changedText(screen.index, "ingredients_used", ev.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cột phải: Lời thoại Tiếng Việt (VI) */}
+                <div className="screen-card__col screen-card__col--audio">
+                  <div className="field">
+                    <label className="field__label" htmlFor={`vo-${screen.index}`}>
+                      🎙️ Lời thoại lồng tiếng (Tiếng Việt)
+                    </label>
+                    <textarea
+                      id={`vo-${screen.index}`}
+                      className="input"
+                      rows={3}
+                      value={e.vi_voiceover_text}
+                      onChange={(ev) => changedText(screen.index, "vi_voiceover_text", ev.target.value)}
+                      placeholder="Lời đọc tiếng Việt cho screen này..."
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label className="field__label" htmlFor={`md-${screen.index}`}>
+                      📝 Ghi chú chuyển cảnh (Continuity Markdown)
+                    </label>
+                    <textarea
+                      id={`md-${screen.index}`}
+                      className="input mono"
+                      rows={2}
+                      value={e.prompt_detail_md}
+                      onChange={(ev) => changedText(screen.index, "prompt_detail_md", ev.target.value)}
+                      placeholder="Ghi chú chi tiết..."
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      <div className="result__actions" style={{ marginTop: "1rem" }}>
-        <button type="button" className="btn btn--ghost" onClick={handleSave} disabled={busy !== null || !dirty}>
+      {/* Action buttons */}
+      <div className="review-panel__actions" style={{ marginTop: "1.25rem" }}>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={handleSave}
+          disabled={busy !== null || !dirty}
+        >
           {busy === "save" ? <span className="btn__spinner" /> : null}
-          {busy === "save" ? "Đang lưu..." : dirty ? "Lưu thay đổi" : "Đã lưu"}
+          {busy === "save" ? "Đang lưu..." : dirty ? "💾 Lưu thay đổi" : "✓ Đã lưu"}
         </button>
 
-        <button type="button" className="btn btn--primary" onClick={handleApprove} disabled={busy !== null}>
-          {busy === "approve" ? <span className="btn__spinner" /> : null}
-          {busy === "approve" ? "Đang phê duyệt..." : "Phê duyệt, chờ upload video"}
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={handleApprove}
+          disabled={busy !== null}
+        >
+          {busy === "approve" ? <span className="btn__spinner" /> : <IconCheck size={16} />}
+          {busy === "approve" ? "Đang phê duyệt..." : "Phê duyệt, chuyển sang tạo clip"}
         </button>
       </div>
-
-      {dirty && (
-        <p className="page-head__lead" style={{ marginTop: "0.5rem" }}>
-          Có thay đổi chưa lưu.
-        </p>
-      )}
     </div>
   );
 }

@@ -1,10 +1,5 @@
-// pages/GenerateVideoPage.tsx — "Tạo video từ chủ đề" (010-topic-video-generation).
-//
-// US1 (MVP): nhập chủ đề văn bản, submit, poll trạng thái, tải video khi xong.
-// US4: bật "Quản lý pipeline" dừng job ở chốt outline/scene để duyệt trước khi
-// tốn chi phí tìm ảnh/TTS/render — tái dùng ReviewGatePanel đã có cho luồng dub.
-
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+// pages/GenerateVideoPage.tsx — Studio: Tạo video từ chủ đề (Topic-to-Video)
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ApiError,
@@ -12,7 +7,6 @@ import {
   generateOutputUrl,
   getGenerateJob,
   listVoices,
-  previewVoice,
   rerunGenerateFromStep,
   retryGenerateJob,
   submitGenerateJob,
@@ -24,26 +18,21 @@ import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
 import ReviewGatePanel from "../components/ReviewGatePanel";
 import StatusBadge from "../components/StatusBadge";
-import { IconDownload, IconPlay, IconRetry } from "../components/Icon";
+import StudioTabs from "../components/StudioTabs";
+import VoiceSelector from "../components/VoiceSelector";
+import { IconDownload, IconRetry, IconSparkles } from "../components/Icon";
 import { confirm } from "../lib/confirm";
 import {
   GENERATE_STEP_LABELS,
   POLL_INTERVAL_MS,
-  PROVIDER_LABELS,
   TERMINAL_STATUSES,
+  voiceKey,
 } from "../lib/labels";
+import { useToast } from "../context/ToastContext";
 
-function voiceKey(v: Voice) {
-  return `${v.provider}|${v.voice_id}`;
-}
-
-// 010: rerun-from-step cho phép ở cả job "done" lẫn "failed" (khác /retry chỉ
-// dành cho failed) — job không có thread nền nào đang xử lý ở 2 trạng thái này
 const RERUN_ALLOWED_STATUSES = new Set(["done", "failed", "awaiting_review"]);
 
 export default function GenerateVideoPage() {
-  // Lịch sử job (JobListPage) trỏ tới job "generate" cũ qua ?job=<id> — mở
-  // thẳng tiến trình/kết quả của job đó, không cần submit lại
   const [searchParams] = useSearchParams();
   const viewJobId = searchParams.get("job");
 
@@ -58,13 +47,9 @@ export default function GenerateVideoPage() {
   const [rerunStep, setRerunStep] = useState<GenerateRerunStep>(GENERATE_RERUN_STEPS[0]);
   const [rerunning, setRerunning] = useState(false);
   const [loadingExisting, setLoadingExisting] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  // 008/010: có sửa dở ở chốt outline — tạm dừng poll để không mất bản đang gõ
   const [reviewDirty, setReviewDirty] = useState(false);
   const pollRef = useRef<number | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     listVoices()
@@ -74,10 +59,7 @@ export default function GenerateVideoPage() {
           setSelectedVoiceKey(voiceKey(res.voices[0]));
         }
       })
-      .catch(() => {
-        // Không chặn form nếu lấy danh sách giọng lỗi — vẫn dùng được job
-        // với giọng mặc định
-      });
+      .catch(() => {});
   }, []);
 
   function stopPolling() {
@@ -95,6 +77,9 @@ export default function GenerateVideoPage() {
         setJob(detail);
         if (TERMINAL_STATUSES.has(detail.status)) {
           stopPolling();
+          if (detail.status === "done") {
+            toast.success("Video từ chủ đề đã hoàn tất!");
+          }
         }
       } catch {
         stopPolling();
@@ -104,7 +89,6 @@ export default function GenerateVideoPage() {
 
   useEffect(() => stopPolling, []);
 
-  // Mở job "generate" đã có sẵn (từ ?job=<id>, VD link ở trang Lịch sử)
   useEffect(() => {
     if (!viewJobId) return;
     setLoadingExisting(true);
@@ -121,7 +105,6 @@ export default function GenerateVideoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewJobId]);
 
-  // Dừng/khởi động lại poll theo trạng thái "đang sửa dở" của panel review
   useEffect(() => {
     if (!job) return;
     if (reviewDirty) {
@@ -140,7 +123,7 @@ export default function GenerateVideoPage() {
       setJob(detail);
       if (!TERMINAL_STATUSES.has(detail.status)) startPolling(job.job_id);
     } catch {
-      /* poll kế tiếp sẽ tự đồng bộ lại */
+      /* poll kế tiếp sẽ tự đồng bộ */
     }
   }
 
@@ -156,42 +139,20 @@ export default function GenerateVideoPage() {
         selectedVoice?.provider,
         selectedVoice?.voice_id,
       );
+      toast.success("Đã gửi yêu cầu tạo video từ chủ đề!");
       const detail = await getGenerateJob(job_id);
       setJob(detail);
       startPolling(job_id);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const runningId = err.body?.running_job_id ?? "?";
-        setError(`Đang có job xử lý (job_id: ${runningId}), vui lòng chờ job đó xong`);
+        setError(`Đang có job xử lý (job_id: ${runningId}), vui lòng chờ job đó xong.`);
       } else {
         setError(err instanceof ApiError ? err.message : "Có lỗi xảy ra khi submit job");
       }
+      toast.error("Gửi job thất bại");
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function handlePreview() {
-    const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
-    if (!selectedVoice) return;
-
-    setPreviewError(null);
-    setPreviewing(true);
-    try {
-      const blob = await previewVoice(selectedVoice.provider, selectedVoice.voice_id);
-      if (previewUrlRef.current) {
-        URL.revokeObjectURL(previewUrlRef.current);
-      }
-      const objectUrl = URL.createObjectURL(blob);
-      previewUrlRef.current = objectUrl;
-      if (audioRef.current) {
-        audioRef.current.src = objectUrl;
-        await audioRef.current.play();
-      }
-    } catch (err) {
-      setPreviewError(err instanceof ApiError ? err.message : "Nghe thử thất bại");
-    } finally {
-      setPreviewing(false);
     }
   }
 
@@ -204,20 +165,14 @@ export default function GenerateVideoPage() {
       const detail = await getGenerateJob(job_id);
       setJob(detail);
       startPolling(job_id);
+      toast.info("Đang thử lại job...");
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        const runningId = err.body?.running_job_id ?? "?";
-        setError(`Đang có job xử lý (job_id: ${runningId}), vui lòng chờ job đó xong`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Thử lại thất bại");
-      }
+      setError(err instanceof ApiError ? err.message : "Thử lại thất bại");
     } finally {
       setRetrying(false);
     }
   }
 
-  // Đổi giọng chỉ có tác dụng nếu bước chạy lại còn đi qua synthesizing —
-  // "rendering" không tổng hợp lại giọng đọc nên gửi kèm cũng vô nghĩa
   const canChangeVoice = rerunStep !== "rendering";
   const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
   const voiceChanged =
@@ -228,8 +183,8 @@ export default function GenerateVideoPage() {
     if (!job) return;
     const changingVoice = canChangeVoice && voiceChanged && selectedVoice;
     const confirmMsg = changingVoice
-      ? `Chạy lại từ bước "${GENERATE_STEP_LABELS[step]}" với giọng đọc "${changingVoice.name}", sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có).`
-      : `Chạy lại từ bước "${GENERATE_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có).`;
+      ? `Chạy lại từ bước "${GENERATE_STEP_LABELS[step]}" với giọng đọc "${changingVoice.name}", sẽ XOÁ kết quả của bước này và các bước sau.`
+      : `Chạy lại từ bước "${GENERATE_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và các bước sau.`;
     const ok = await confirm({
       title: "Chạy lại từ bước trước đó?",
       message: confirmMsg,
@@ -247,16 +202,12 @@ export default function GenerateVideoPage() {
           ? { ttsProvider: changingVoice.provider, voiceId: changingVoice.voice_id }
           : undefined,
       );
+      toast.info(`Đang chạy lại từ bước "${GENERATE_STEP_LABELS[step]}"...`);
       const detail = await getGenerateJob(job.job_id);
       setJob(detail);
       startPolling(job.job_id);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        const runningId = err.body?.running_job_id ?? "?";
-        setError(`Đang có job xử lý (job_id: ${runningId}), vui lòng chờ job đó xong`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Chạy lại thất bại");
-      }
+      setError(err instanceof ApiError ? err.message : "Chạy lại thất bại");
     } finally {
       setRerunning(false);
     }
@@ -265,43 +216,30 @@ export default function GenerateVideoPage() {
   const isBusy = job !== null && !TERMINAL_STATUSES.has(job.status);
   const locked = isBusy || submitting;
 
-  // Nhóm giọng theo provider để danh sách dài vẫn dễ chọn
-  const voiceGroups = useMemo(() => {
-    const groups = new Map<string, Voice[]>();
-    for (const v of voices) {
-      const list = groups.get(v.provider) ?? [];
-      list.push(v);
-      groups.set(v.provider, list);
-    }
-    return [...groups.entries()];
-  }, [voices]);
-
   return (
     <AppShell narrow>
       <div className="page-head">
         <h1>{viewJobId ? "Chi tiết video từ chủ đề" : "Tạo video từ chủ đề"}</h1>
         {viewJobId ? (
           <p className="page-head__lead">
-            <Link to="/generate">← Tạo video mới</Link>
+            <Link to="/generate">← Tạo video chủ đề mới</Link>
           </p>
         ) : (
           <p className="page-head__lead">
-            Nhập 1 chủ đề — hệ thống sẽ tự viết kịch bản, tra cứu web khi cần, tìm ảnh
-            minh hoạ, đọc giọng và dựng thành video dọc hoàn chỉnh.
+            Nhập 1 chủ đề bất kỳ — AI sẽ tự viết kịch bản, tra cứu thông tin, tìm ảnh minh hoạ, đọc giọng và dựng thành video dọc 9:16.
           </p>
         )}
       </div>
 
+      {!viewJobId && <StudioTabs />}
+
       {!viewJobId && (
         <form onSubmit={handleSubmit}>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio ref={audioRef} hidden />
-
           <div className="card">
-            <span className="card__eyebrow">Chủ đề</span>
+            <span className="card__eyebrow">Chủ đề &amp; Ý tưởng</span>
             <div className="field">
               <label className="field__label" htmlFor="topic">
-                Chủ đề video
+                Chủ đề video (Topic)
               </label>
               <textarea
                 id="topic"
@@ -309,13 +247,13 @@ export default function GenerateVideoPage() {
                 rows={3}
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="VD: tổng quan về các loại tiền tệ trong lịch sử"
+                placeholder="VD: Tổng quan về nguồn gốc các loại tiền tệ trong lịch sử loài người"
                 disabled={locked}
                 required
                 style={{ resize: "vertical", fontFamily: "inherit" }}
               />
               <span className="field__hint">
-                Video dọc (9:16), khoảng 1-5 phút, có giọng đọc và ảnh minh hoạ tự động.
+                Video dọc 9:16 (khoảng 1-3 phút), tối ưu cho TikTok / Shorts / Reels.
               </span>
             </div>
 
@@ -329,9 +267,9 @@ export default function GenerateVideoPage() {
                 />
                 <span className="switch__track" />
                 <span className="switch__text">
-                  <span className="switch__name">Quản lý pipeline</span>
+                  <span className="switch__name">Quản lý pipeline (Human-in-the-loop)</span>
                   <span className="switch__desc">
-                    Dừng lại cho tôi duyệt outline/scene trước khi tìm ảnh và đọc giọng
+                    Tạm dừng cho bạn duyệt outline/scene trước khi AI tìm ảnh và đọc giọng
                   </span>
                 </span>
               </label>
@@ -340,50 +278,28 @@ export default function GenerateVideoPage() {
 
           <div className="card">
             <span className="card__eyebrow">Giọng đọc</span>
-            <div className="field">
-              <label className="field__label" htmlFor="voice-select">
-                Chọn giọng
-              </label>
-              <div className="voice-picker">
-                <select
-                  id="voice-select"
-                  className="select"
-                  value={selectedVoiceKey}
-                  onChange={(e) => setSelectedVoiceKey(e.target.value)}
-                  disabled={locked || voices.length === 0}
-                >
-                  {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
-                  {voiceGroups.map(([provider, list]) => (
-                    <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
-                      {list.map((v) => (
-                        <option key={voiceKey(v)} value={voiceKey(v)}>
-                          {v.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={handlePreview}
-                  disabled={previewing || !selectedVoiceKey}
-                >
-                  {previewing ? <span className="btn__spinner" /> : <IconPlay />}
-                  {previewing ? "Đang tải" : "Nghe thử"}
-                </button>
-              </div>
-              {previewError && (
-                <span className="field__hint" style={{ color: "var(--danger)" }}>
-                  {previewError}
-                </span>
-              )}
-            </div>
+            <VoiceSelector
+              voices={voices}
+              selectedVoiceKey={selectedVoiceKey}
+              onChange={setSelectedVoiceKey}
+              disabled={locked}
+            />
 
-            <div className="field">
+            <div className="field" style={{ marginTop: "1.25rem" }}>
               <button type="submit" className="btn btn--primary btn--block" disabled={locked}>
-                {submitting && <span className="btn__spinner" />}
-                {submitting ? "Đang gửi..." : isBusy ? "Đang xử lý job hiện tại" : "Tạo video"}
+                {submitting ? (
+                  <>
+                    <span className="btn__spinner" />
+                    <span>Đang gửi...</span>
+                  </>
+                ) : isBusy ? (
+                  <span>Đang xử lý job hiện tại</span>
+                ) : (
+                  <>
+                    <IconSparkles size={16} />
+                    <span>Tạo video AI</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -405,7 +321,7 @@ export default function GenerateVideoPage() {
       {job && (
         <div className="card">
           <div className="card__title">
-            <h2>Tiến trình</h2>
+            <h2>Tiến trình tạo video</h2>
           </div>
           {viewJobId && <p className="page-head__lead">{job.topic}</p>}
 
@@ -450,8 +366,6 @@ export default function GenerateVideoPage() {
             </div>
           )}
 
-          {/* 010: quay lại 1 bước trước đó để thử lại — cho phép ở cả job
-              done lẫn failed, khác nút "Thử lại" ở trên chỉ dành cho failed */}
           {RERUN_ALLOWED_STATUSES.has(job.status) && (
             <div
               style={{
@@ -490,55 +404,6 @@ export default function GenerateVideoPage() {
             </div>
           )}
 
-          {/* Đổi giọng đọc trước khi chạy lại — chỉ hiện khi bước chọn còn đi
-              qua synthesizing */}
-          {RERUN_ALLOWED_STATUSES.has(job.status) && canChangeVoice && (
-            <div className="field" style={{ marginTop: "0.75rem" }}>
-              <label className="field__label" htmlFor="rerun-voice-select">
-                Đổi giọng đọc (tuỳ chọn)
-              </label>
-              <div className="voice-picker">
-                <select
-                  id="rerun-voice-select"
-                  className="select"
-                  value={selectedVoiceKey}
-                  onChange={(e) => setSelectedVoiceKey(e.target.value)}
-                  disabled={rerunning || voices.length === 0}
-                >
-                  {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
-                  {voiceGroups.map(([provider, list]) => (
-                    <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
-                      {list.map((v) => (
-                        <option key={voiceKey(v)} value={voiceKey(v)}>
-                          {v.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={handlePreview}
-                  disabled={previewing || !selectedVoiceKey}
-                >
-                  {previewing ? <span className="btn__spinner" /> : <IconPlay />}
-                  {previewing ? "Đang tải" : "Nghe thử"}
-                </button>
-              </div>
-              {previewError && (
-                <span className="field__hint" style={{ color: "var(--danger)" }}>
-                  {previewError}
-                </span>
-              )}
-              <span className="field__hint">
-                {voiceChanged
-                  ? 'Bấm "Chạy lại" ở trên để tổng hợp lại toàn bộ giọng đọc với giọng này.'
-                  : `Giọng hiện tại: ${selectedVoice?.name ?? job.voice_id ?? "mặc định"}.`}
-              </span>
-            </div>
-          )}
-
           {job.status === "done" && job.output_video_url && (
             <div className="result" style={{ marginTop: "1.25rem" }}>
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
@@ -557,7 +422,6 @@ export default function GenerateVideoPage() {
         </div>
       )}
 
-      {/* 008: chốt kiểm duyệt — job dừng chờ phê duyệt, không tự chạy tiếp */}
       {job && job.status === "awaiting_review" && (
         <ReviewGatePanel
           jobId={job.job_id}

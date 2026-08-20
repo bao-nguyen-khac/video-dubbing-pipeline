@@ -1,28 +1,14 @@
-// pages/ScriptToVideoPage.tsx — "Script-to-video": nhập nhân vật/premise, hệ
-// thống sinh character bible + kịch bản chia nhiều PHẦN (part) kèm prompt
-// Google Flow/Omni Flash, người dùng duyệt từng phần rồi tự tạo clip ở
-// ngoài, TỰ NỐI LẠI thành 1 file, upload lại — hệ thống lồng tiếng + ghép
-// thành video hoàn chỉnh cho từng phần.
-//
-// 3 cấp điều hướng qua query param:
-//   (không có)                    → danh sách dự án đang có / tạo mới
-//   ?project=<slug>                → chi tiết dự án: character bible + danh
-//                                    sách các phần
-//   ?project=<slug>&part=<index>   → chi tiết 1 phần: duyệt/upload/tiến trình
-
+// pages/ScriptToVideoPage.tsx — Studio: Script-to-video (Character Bible & POV Multi-part)
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ApiError,
   SCRIPT_TO_VIDEO_PART_RERUN_STEPS,
   getScriptToVideoDeliverable,
   getScriptToVideoJob,
   getScriptToVideoPartDeliverable,
   listScriptToVideoJobs,
   listVoices,
-  previewVoice,
   rerunScriptToVideoPartFromStep,
-  retryScriptToVideoJob,
   retryScriptToVideoPart,
   scriptToVideoPartOutputUrl,
   submitScriptToVideoJob,
@@ -37,24 +23,21 @@ import Callout from "../components/Callout";
 import PartUploadCard from "../components/PartUploadCard";
 import ScriptPromptReviewPanel from "../components/ScriptPromptReviewPanel";
 import StatusBadge from "../components/StatusBadge";
-import { IconDownload, IconInbox, IconPlay, IconRetry } from "../components/Icon";
+import StudioTabs from "../components/StudioTabs";
+import VoiceSelector from "../components/VoiceSelector";
+import { IconDownload, IconInbox, IconRetry, IconSparkles } from "../components/Icon";
 import { confirm } from "../lib/confirm";
 import {
   POLL_INTERVAL_MS,
-  PROVIDER_LABELS,
   SCRIPT_TO_VIDEO_PART_STEP_LABELS,
   TERMINAL_STATUSES,
   absoluteTime,
   relativeTime,
+  voiceKey,
 } from "../lib/labels";
-
-function voiceKey(v: Voice) {
-  return `${v.provider}|${v.voice_id}`;
-}
+import { useToast } from "../context/ToastContext";
 
 const PART_RERUN_ALLOWED_STATUSES = new Set(["done", "failed"]);
-
-// ─── Danh sách dự án ────────────────────────────────────────────────────────
 
 function ProjectRow({ project }: { project: ScriptToVideoJobSummary }) {
   return (
@@ -82,8 +65,8 @@ function ProjectList({ onCreateNew }: { onCreateNew: () => void }) {
     try {
       const res = await listScriptToVideoJobs();
       setProjects(res.jobs);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Không tải được danh sách dự án");
+    } catch {
+      setError("Không tải được danh sách dự án");
     }
   }
 
@@ -99,18 +82,14 @@ function ProjectList({ onCreateNew }: { onCreateNew: () => void }) {
 
   return (
     <>
-      <div className="page-head__lead" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="page-head__lead" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <span>{!loaded ? "Đang tải..." : `${projects.length} dự án đã tạo.`}</span>
         <button type="button" className="btn btn--primary" onClick={onCreateNew}>
           + Tạo dự án mới
         </button>
       </div>
 
-      {error && (
-        <Callout tone="error" title="Có lỗi">
-          {error}
-        </Callout>
-      )}
+      {error && <Callout tone="error" title="Có lỗi">{error}</Callout>}
 
       {!loaded && !error && (
         <div className="card">
@@ -123,7 +102,7 @@ function ProjectList({ onCreateNew }: { onCreateNew: () => void }) {
           <div className="empty">
             <IconInbox className="empty__icon" />
             <div className="empty__title">Chưa có dự án nào</div>
-            <p>Bấm &quot;+ Tạo dự án mới&quot; để bắt đầu.</p>
+            <p>Bấm &quot;+ Tạo dự án mới&quot; để bắt đầu kịch bản đầu tiên.</p>
           </div>
         </div>
       )}
@@ -140,8 +119,6 @@ function ProjectList({ onCreateNew }: { onCreateNew: () => void }) {
     </>
   );
 }
-
-// ─── Xem file (character bible / deliverable của phần) ──────────────────────
 
 function DeliverableViewer({
   filenames,
@@ -161,8 +138,8 @@ function DeliverableViewer({
     if (!filename) return;
     try {
       setText(await fetchText(filename));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Không tải được nội dung file");
+    } catch {
+      setError("Không tải được nội dung file");
     }
   }
 
@@ -171,11 +148,11 @@ function DeliverableViewer({
   return (
     <div className="card">
       <div className="card__title">
-        <h2>Xem file</h2>
+        <h2>Tài liệu đã sinh (Deliverables)</h2>
       </div>
       <div className="field" style={{ maxWidth: "320px" }}>
         <label className="field__label" htmlFor="s2v-deliverable-select">
-          Chọn file
+          Chọn file để xem
         </label>
         <select
           id="s2v-deliverable-select"
@@ -183,7 +160,7 @@ function DeliverableViewer({
           value={name}
           onChange={(e) => handleSelect(e.target.value)}
         >
-          <option value="">-- chọn file --</option>
+          <option value="">-- Chọn file tài liệu --</option>
           {filenames.map((f) => (
             <option key={f} value={f}>
               {f}
@@ -191,11 +168,7 @@ function DeliverableViewer({
           ))}
         </select>
       </div>
-      {error && (
-        <Callout tone="error" title="Không tải được file">
-          {error}
-        </Callout>
-      )}
+      {error && <Callout tone="error" title="Lỗi">{error}</Callout>}
       {text !== null && (
         <pre
           style={{
@@ -204,9 +177,11 @@ function DeliverableViewer({
             maxHeight: "24rem",
             overflow: "auto",
             marginTop: "0.75rem",
-            padding: "0.75rem",
-            background: "var(--surface-alt, rgba(127,127,127,0.08))",
+            padding: "0.85rem",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
             borderRadius: "6px",
+            fontSize: "0.85rem",
           }}
         >
           {text}
@@ -216,14 +191,12 @@ function DeliverableViewer({
   );
 }
 
-// ─── Chi tiết dự án: character bible + danh sách phần ────────────────────────
-
 function ProjectDetail({ project }: { project: ScriptToVideoJobDetail }) {
   return (
     <>
       <div className="card">
         <div className="card__title">
-          <h2>Tiến trình</h2>
+          <h2>Tiến trình dự án</h2>
         </div>
         <p className="page-head__lead">{project.premise}</p>
         <div className="progress">
@@ -238,11 +211,7 @@ function ProjectDetail({ project }: { project: ScriptToVideoJobDetail }) {
             />
           </div>
         </div>
-        {project.error && (
-          <Callout tone="error" title="Sinh kịch bản thất bại" >
-            {project.error}
-          </Callout>
-        )}
+        {project.error && <Callout tone="error" title="Lỗi">{project.error}</Callout>}
       </div>
 
       {project.character && (
@@ -254,7 +223,7 @@ function ProjectDetail({ project }: { project: ScriptToVideoJobDetail }) {
 
       <div className="card">
         <div className="card__title">
-          <h2>Các phần</h2>
+          <h2>Danh sách các phần ({project.parts.length})</h2>
         </div>
         <div style={{ display: "grid", gap: "0.75rem" }}>
           {project.parts.map((part) => (
@@ -293,8 +262,6 @@ function PartCard({ slug, part }: { slug: string; part: ScriptToVideoPartSummary
   );
 }
 
-// ─── Chi tiết 1 phần: duyệt / upload / tiến trình ────────────────────────────
-
 function PartDetail({
   slug,
   part,
@@ -312,10 +279,6 @@ function PartDetail({
   const [retrying, setRetrying] = useState(false);
   const [rerunStep, setRerunStep] = useState<ScriptToVideoPartRerunStep>(SCRIPT_TO_VIDEO_PART_RERUN_STEPS[0]);
   const [rerunning, setRerunning] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     listVoices()
@@ -326,39 +289,14 @@ function PartDetail({
       .catch(() => {});
   }, []);
 
-  async function handlePreview() {
-    const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
-    if (!selectedVoice) return;
-    setPreviewError(null);
-    setPreviewing(true);
-    try {
-      const blob = await previewVoice(selectedVoice.provider, selectedVoice.voice_id);
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      const objectUrl = URL.createObjectURL(blob);
-      previewUrlRef.current = objectUrl;
-      if (audioRef.current) {
-        audioRef.current.src = objectUrl;
-        await audioRef.current.play();
-      }
-    } catch (err) {
-      setPreviewError(err instanceof ApiError ? err.message : "Nghe thử thất bại");
-    } finally {
-      setPreviewing(false);
-    }
-  }
-
   async function handleRetry() {
     setError(null);
     setRetrying(true);
     try {
       await retryScriptToVideoPart(slug, part.index);
       onRefresh();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError(`Đang có dự án khác xử lý (${err.body?.running_job_id ?? "?"}), vui lòng chờ`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Thử lại thất bại");
-      }
+    } catch {
+      setError("Thử lại thất bại");
     } finally {
       setRetrying(false);
     }
@@ -371,7 +309,7 @@ function PartDetail({
     const changingVoice = canChangeVoice && selectedVoice;
     const ok = await confirm({
       title: "Chạy lại từ bước trước đó?",
-      message: `Chạy lại từ bước "${SCRIPT_TO_VIDEO_PART_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và mọi bước sau (kể cả video kết quả hiện tại nếu có).`,
+      message: `Chạy lại từ bước "${SCRIPT_TO_VIDEO_PART_STEP_LABELS[step]}" sẽ XOÁ kết quả của bước này và mọi bước sau.`,
       confirmLabel: "Chạy lại",
       tone: "danger",
     });
@@ -384,12 +322,8 @@ function PartDetail({
         changingVoice ? { ttsProvider: changingVoice.provider, voiceId: changingVoice.voice_id } : undefined,
       );
       onRefresh();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError(`Đang có dự án khác xử lý (${err.body?.running_job_id ?? "?"}), vui lòng chờ`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Chạy lại thất bại");
-      }
+    } catch {
+      setError("Chạy lại thất bại");
     } finally {
       setRerunning(false);
     }
@@ -409,8 +343,6 @@ function PartDetail({
 
   return (
     <>
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audioRef} hidden />
       <div className="card">
         <div className="card__title">
           <h2>
@@ -432,11 +364,7 @@ function PartDetail({
           </div>
         </div>
 
-        {error && (
-          <Callout tone="error" title="Không thực hiện được">
-            {error}
-          </Callout>
-        )}
+        {error && <Callout tone="error" title="Lỗi">{error}</Callout>}
 
         {part.status === "failed" && (
           <div style={{ marginTop: "1rem" }}>
@@ -477,38 +405,6 @@ function PartDetail({
           </div>
         )}
 
-        {PART_RERUN_ALLOWED_STATUSES.has(part.status) && canChangeVoice && (
-          <div className="field" style={{ marginTop: "0.75rem" }}>
-            <label className="field__label" htmlFor="s2v-rerun-voice-select">
-              Đổi giọng đọc (tuỳ chọn)
-            </label>
-            <div className="voice-picker">
-              <select
-                id="s2v-rerun-voice-select"
-                className="select"
-                value={selectedVoiceKey}
-                onChange={(e) => setSelectedVoiceKey(e.target.value)}
-                disabled={rerunning || voices.length === 0}
-              >
-                {voices.map((v) => (
-                  <option key={voiceKey(v)} value={voiceKey(v)}>
-                    {PROVIDER_LABELS[v.provider] ?? v.provider} · {v.name}
-                  </option>
-                ))}
-              </select>
-              <button type="button" className="btn btn--ghost" onClick={handlePreview} disabled={previewing || !selectedVoiceKey}>
-                {previewing ? <span className="btn__spinner" /> : <IconPlay />}
-                {previewing ? "Đang tải" : "Nghe thử"}
-              </button>
-            </div>
-            {previewError && (
-              <span className="field__hint" style={{ color: "var(--danger)" }}>
-                {previewError}
-              </span>
-            )}
-          </div>
-        )}
-
         {part.status === "done" && part.output_video_url && (
           <div className="result" style={{ marginTop: "1.25rem" }}>
             {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
@@ -535,12 +431,8 @@ function PartDetail({
       {showUpload && (
         <div className="card">
           <div className="card__title">
-            <h2>Upload video</h2>
+            <h2>Upload video đã tạo</h2>
           </div>
-          <p className="page-head__lead">
-            Dùng Visual Prompt (tiếng Anh) đã duyệt để tạo clip từng screen ở Google Flow, tự nối
-            lại thành 1 file, rồi upload ở đây. Hệ thống tự lồng tiếng + ghép khi upload xong.
-          </p>
           <PartUploadCard slug={slug} part={part} onUploaded={onRefresh} />
         </div>
       )}
@@ -552,8 +444,6 @@ function PartDetail({
     </>
   );
 }
-
-// ─── Trang chính ────────────────────────────────────────────────────────────
 
 export default function ScriptToVideoPage() {
   const [searchParams] = useSearchParams();
@@ -572,14 +462,10 @@ export default function ScriptToVideoPage() {
   const [project, setProject] = useState<ScriptToVideoJobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [retryingProject, setRetryingProject] = useState(false);
   const [loadingExisting, setLoadingExisting] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const [reviewDirty, setReviewDirty] = useState(false);
   const pollRef = useRef<number | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     listVoices()
@@ -625,8 +511,8 @@ export default function ScriptToVideoPage() {
         setProject(detail);
         if (!TERMINAL_STATUSES.has(detail.status)) startPolling(viewSlug);
       })
-      .catch((err) => {
-        setError(err instanceof ApiError ? err.message : "Không tải được dự án");
+      .catch(() => {
+        setError("Không tải được dự án");
       })
       .finally(() => setLoadingExisting(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -649,9 +535,7 @@ export default function ScriptToVideoPage() {
       const detail = await getScriptToVideoJob(viewSlug);
       setProject(detail);
       if (!TERMINAL_STATUSES.has(detail.status)) startPolling(viewSlug);
-    } catch {
-      /* poll kế tiếp tự đồng bộ lại */
-    }
+    } catch {}
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -664,70 +548,19 @@ export default function ScriptToVideoPage() {
         premise, numParts, targetScreensPerPart, seriesNotes || undefined,
         selectedVoice?.provider, selectedVoice?.voice_id,
       );
+      toast.success("Đã tạo dự án Script-to-video thành công!");
       setShowCreateForm(false);
       navigate(`/script-to-video?project=${slug}`);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError(`Đang có dự án xử lý (${err.body?.running_job_id ?? "?"}), vui lòng chờ dự án đó xong`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Có lỗi xảy ra khi tạo dự án");
-      }
+    } catch {
+      setError("Có lỗi xảy ra khi tạo dự án");
+      toast.error("Không tạo được dự án");
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handlePreview() {
-    const selectedVoice = voices.find((v) => voiceKey(v) === selectedVoiceKey);
-    if (!selectedVoice) return;
-    setPreviewError(null);
-    setPreviewing(true);
-    try {
-      const blob = await previewVoice(selectedVoice.provider, selectedVoice.voice_id);
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      const objectUrl = URL.createObjectURL(blob);
-      previewUrlRef.current = objectUrl;
-      if (audioRef.current) {
-        audioRef.current.src = objectUrl;
-        await audioRef.current.play();
-      }
-    } catch (err) {
-      setPreviewError(err instanceof ApiError ? err.message : "Nghe thử thất bại");
-    } finally {
-      setPreviewing(false);
-    }
-  }
-
-  async function handleRetryProject() {
-    if (!project) return;
-    setError(null);
-    setRetryingProject(true);
-    try {
-      await retryScriptToVideoJob(project.slug);
-      await refreshProject();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError(`Đang có dự án khác xử lý (${err.body?.running_job_id ?? "?"}), vui lòng chờ`);
-      } else {
-        setError(err instanceof ApiError ? err.message : "Thử lại thất bại");
-      }
-    } finally {
-      setRetryingProject(false);
-    }
-  }
-
   const isBusy = project !== null && !TERMINAL_STATUSES.has(project.status);
   const locked = isBusy || submitting;
-
-  const voiceGroups = useMemo(() => {
-    const groups = new Map<string, Voice[]>();
-    for (const v of voices) {
-      const list = groups.get(v.provider) ?? [];
-      list.push(v);
-      groups.set(v.provider, list);
-    }
-    return [...groups.entries()];
-  }, [voices]);
 
   const showDetail = !!viewSlug;
   const showPartDetail = showDetail && viewPartIndex !== null;
@@ -739,7 +572,7 @@ export default function ScriptToVideoPage() {
     <AppShell narrow>
       <div className="page-head">
         <h1>
-          {showPartDetail ? `Phần ${(viewPartIndex ?? 0) + 1}` : showDetail ? "Chi tiết dự án" : showForm ? "Tạo dự án mới" : "Script-to-video"}
+          {showPartDetail ? `Phần ${(viewPartIndex ?? 0) + 1}` : showDetail ? "Chi tiết dự án" : showForm ? "Tạo dự án mới" : "Script-to-video Studio"}
         </h1>
         {showPartDetail ? (
           <p className="page-head__lead">
@@ -757,25 +590,22 @@ export default function ScriptToVideoPage() {
           </p>
         ) : (
           <p className="page-head__lead">
-            Nhập 1 nhân vật/premise — hệ thống viết character bible + kịch bản chia nhiều phần
-            (part), kèm prompt Google Flow/Gemini Omni Flash. Bạn tự tạo clip từng screen, tự nối
-            lại thành 1 file rồi upload lại từng phần, hệ thống sẽ lồng tiếng và ghép video.
+            Nhập 1 nhân vật/premise — hệ thống viết Character Bible + kịch bản chia nhiều phần kèm Visual Prompt cho Google Flow/Veo.
           </p>
         )}
       </div>
+
+      {!viewSlug && !showCreateForm && <StudioTabs />}
 
       {showList && <ProjectList onCreateNew={() => setShowCreateForm(true)} />}
 
       {showForm && (
         <form onSubmit={handleSubmit}>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio ref={audioRef} hidden />
-
           <div className="card">
-            <span className="card__eyebrow">Nhân vật / Premise</span>
+            <span className="card__eyebrow">Nhân vật / Bối cảnh</span>
             <div className="field">
               <label className="field__label" htmlFor="s2v-premise">
-                Ý tưởng nhân vật/bối cảnh
+                Ý tưởng nhân vật/bối cảnh (Premise)
               </label>
               <textarea
                 id="s2v-premise"
@@ -783,21 +613,17 @@ export default function ScriptToVideoPage() {
                 rows={3}
                 value={premise}
                 onChange={(e) => setPremise(e.target.value)}
-                placeholder="VD: kỹ sư hệ thống quản lý đàn robot khai thác tiểu hành tinh năm 2100"
+                placeholder="VD: Kỹ sư hệ thống quản lý đàn robot khai thác tiểu hành tinh năm 2100..."
                 disabled={locked}
                 required
                 style={{ resize: "vertical", fontFamily: "inherit" }}
               />
-              <span className="field__hint">
-                Hệ thống tự viết character bible (nhân vật/thế giới) + kịch bản POV chia nhiều
-                phần, khung hình dọc 9:16.
-              </span>
             </div>
 
             <div className="field" style={{ display: "flex", gap: "1rem" }}>
               <div style={{ flex: 1 }}>
                 <label className="field__label" htmlFor="s2v-num-parts">
-                  Số phần
+                  Số phần (Parts)
                 </label>
                 <input
                   id="s2v-num-parts" type="number" className="input" min={1}
@@ -807,7 +633,7 @@ export default function ScriptToVideoPage() {
               </div>
               <div style={{ flex: 1 }}>
                 <label className="field__label" htmlFor="s2v-screens-per-part">
-                  Screen / phần
+                  Số Screen / mỗi phần
                 </label>
                 <input
                   id="s2v-screens-per-part" type="number" className="input" min={1}
@@ -819,63 +645,43 @@ export default function ScriptToVideoPage() {
 
             <div className="field">
               <label className="field__label" htmlFor="s2v-series-notes">
-                Ghi chú / quy tắc series (tuỳ chọn)
+                Ghi chú series (tuỳ chọn)
               </label>
               <textarea
                 id="s2v-series-notes"
                 className="input"
-                rows={3}
+                rows={2}
                 value={seriesNotes}
                 onChange={(e) => setSeriesNotes(e.target.value)}
-                placeholder="VD: giữ tông hard sci-fi công nghiệp, không fantasy, AI đồng hành tên Vega..."
+                placeholder="VD: Tông hard sci-fi, không fantasy, nhân vật chính tên Mark..."
                 disabled={locked}
                 style={{ resize: "vertical", fontFamily: "inherit" }}
               />
-              <span className="field__hint">Dùng để giữ nhất quán nếu bạn có nhiều dự án trong cùng 1 series.</span>
             </div>
           </div>
 
           <div className="card">
             <span className="card__eyebrow">Giọng đọc</span>
-            <div className="field">
-              <label className="field__label" htmlFor="s2v-voice-select">
-                Chọn giọng
-              </label>
-              <div className="voice-picker">
-                <select
-                  id="s2v-voice-select"
-                  className="select"
-                  value={selectedVoiceKey}
-                  onChange={(e) => setSelectedVoiceKey(e.target.value)}
-                  disabled={locked || voices.length === 0}
-                >
-                  {voices.length === 0 && <option value="">Đang tải danh sách giọng...</option>}
-                  {voiceGroups.map(([provider, list]) => (
-                    <optgroup key={provider} label={PROVIDER_LABELS[provider] ?? provider}>
-                      {list.map((v) => (
-                        <option key={voiceKey(v)} value={voiceKey(v)}>
-                          {v.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <button type="button" className="btn btn--ghost" onClick={handlePreview} disabled={previewing || !selectedVoiceKey}>
-                  {previewing ? <span className="btn__spinner" /> : <IconPlay />}
-                  {previewing ? "Đang tải" : "Nghe thử"}
-                </button>
-              </div>
-              {previewError && (
-                <span className="field__hint" style={{ color: "var(--danger)" }}>
-                  {previewError}
-                </span>
-              )}
-            </div>
+            <VoiceSelector
+              voices={voices}
+              selectedVoiceKey={selectedVoiceKey}
+              onChange={setSelectedVoiceKey}
+              disabled={locked}
+            />
 
-            <div className="field">
+            <div className="field" style={{ marginTop: "1.25rem" }}>
               <button type="submit" className="btn btn--primary btn--block" disabled={locked}>
-                {submitting && <span className="btn__spinner" />}
-                {submitting ? "Đang gửi..." : isBusy ? "Đang xử lý dự án hiện tại" : "Tạo dự án"}
+                {submitting ? (
+                  <>
+                    <span className="btn__spinner" />
+                    <span>Đang sinh kịch bản...</span>
+                  </>
+                ) : (
+                  <>
+                    <IconSparkles size={16} />
+                    <span>Bắt đầu dự án</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -888,34 +694,17 @@ export default function ScriptToVideoPage() {
         </div>
       )}
 
-      {error && (
-        <Callout tone="error" title="Không thực hiện được">
-          {error}
-        </Callout>
-      )}
+      {error && <Callout tone="error" title="Lỗi">{error}</Callout>}
 
-      {showDetail && project && !showPartDetail && (
-        <>
-          <ProjectDetail project={project} />
-          {project.status === "failed" && project.can_retry && (
-            <div className="card">
-              <button type="button" className="btn btn--primary" onClick={handleRetryProject} disabled={retryingProject}>
-                {retryingProject && <span className="btn__spinner" />}
-                {retryingProject ? "Đang thử lại..." : "Thử lại sinh kịch bản"}
-              </button>
-            </div>
-          )}
-        </>
-      )}
+      {showDetail && !showPartDetail && project && <ProjectDetail project={project} />}
 
-      {showPartDetail && project && currentPart && (
-        <PartDetail slug={project.slug} part={currentPart} onDirtyChange={setReviewDirty} onRefresh={refreshProject} />
-      )}
-
-      {showPartDetail && project && !currentPart && (
-        <Callout tone="error" title="Không tìm thấy phần này">
-          Phần chưa tồn tại hoặc chưa được sinh kịch bản.
-        </Callout>
+      {showPartDetail && currentPart && (
+        <PartDetail
+          slug={viewSlug!}
+          part={currentPart}
+          onDirtyChange={setReviewDirty}
+          onRefresh={refreshProject}
+        />
       )}
     </AppShell>
   );

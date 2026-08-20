@@ -8,26 +8,29 @@ import DownloadsPage from "./pages/DownloadsPage";
 import GenerateVideoPage from "./pages/GenerateVideoPage";
 import ScriptToVideoPage from "./pages/ScriptToVideoPage";
 import ConfirmDialog from "./components/ConfirmDialog";
+import { ThemeProvider } from "./context/ThemeContext";
+import { ToastProvider } from "./context/ToastContext";
 import "./App.css";
 
-// BrowserRouter thuần client-side (không dùng RSC/framework/data mode) — nên
-// advisory GHSA-qwww-vcr4-c8h2 (RSC Mode CSRF Bypass) của react-router-dom
-// không áp dụng cho cách dùng ở đây.
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<HomePage />} />
-        <Route path="/generate" element={<GenerateVideoPage />} />
-        <Route path="/script-to-video" element={<ScriptToVideoPage />} />
-        <Route path="/jobs" element={<JobListPage />} />
-        <Route path="/jobs/:jobId" element={<JobDetailPage />} />
-        <Route path="/downloads" element={<DownloadsPage />} />
-        <Route path="/publish" element={<PublishPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-      <ConfirmDialog />
-    </BrowserRouter>
+    <ThemeProvider>
+      <ToastProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<HomePage />} />
+            <Route path="/generate" element={<GenerateVideoPage />} />
+            <Route path="/script-to-video" element={<ScriptToVideoPage />} />
+            <Route path="/jobs" element={<JobListPage />} />
+            <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+            <Route path="/downloads" element={<DownloadsPage />} />
+            <Route path="/publish" element={<PublishPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+          <ConfirmDialog />
+        </BrowserRouter>
+      </ToastProvider>
+    </ThemeProvider>
   );
 }
