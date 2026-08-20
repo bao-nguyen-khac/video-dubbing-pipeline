@@ -119,3 +119,11 @@ export function IconTrash({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+export function IconShare({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M12 3v12m0-12l4 4m-4-4l-4 4M6 13v6a2 2 0 002 2h8a2 2 0 002-2v-6" />
+    </svg>
+  );
+}

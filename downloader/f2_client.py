@@ -93,18 +93,34 @@ def _download_tiktok(url: str, output_path: Path) -> Path:
                 "max_connections": 1,
                 "path": str(output_path.parent),
                 "folderize": False,
+                # Tên file cố định = aweme_id, không phụ thuộc {desc} (có thể
+                # chứa ký tự lạ/unicode) — để biết chắc tên file tải xong mà
+                # rename về output_path (xem _fetch() bên dưới).
+                "naming": "{aweme_id}",
             }
         )
 
         async def _fetch():
-            video = await handler.fetch_one_video(url)
+            # fetch_one_video() nhận aweme_id (chuỗi số), KHÔNG nhận URL — phải
+            # resolve URL thành aweme_id trước (giống Douyin bên dưới), nếu
+            # không f2 tự coi cả URL là aweme_id và luôn lỗi.
+            from f2.apps.tiktok.utils import AwemeIdFetcher
+
+            aweme_id = await AwemeIdFetcher.get_aweme_id(url)
+            video = await handler.fetch_one_video(aweme_id)
             if not video or not video.video_play_addr:
                 raise RuntimeError("f2 không lấy được play URL của video TikTok")
-            await handler.downloader.create_download_task(
+            # create_download_task (số ít) KHÔNG tồn tại trong f2 — API thật
+            # là create_download_tasks (số nhiều), nhận aweme_data dạng dict
+            # và 1 thư mục đích (không nhận thẳng đường dẫn file cuối cùng).
+            await handler.downloader.create_download_tasks(
                 handler.kwargs,
-                video,
-                str(output_path),
+                video._to_dict(),
+                output_path.parent,
             )
+            downloaded = output_path.parent / f"{aweme_id}_video.mp4"
+            if downloaded.exists():
+                downloaded.rename(output_path)
 
         asyncio.run(_fetch())
 
@@ -149,18 +165,35 @@ def _download_douyin(url: str, output_path: Path) -> Path:
                 "max_connections": 1,
                 "path": str(output_path.parent),
                 "folderize": False,
+                # Tên file cố định = aweme_id, không phụ thuộc {desc} (có thể
+                # chứa ký tự lạ/unicode) — để biết chắc tên file tải xong mà
+                # rename về output_path (xem _fetch() bên dưới).
+                "naming": "{aweme_id}",
             }
         )
 
         async def _fetch():
-            video = await handler.fetch_one_video(url)
+            # fetch_one_video() nhận aweme_id (chuỗi số), KHÔNG nhận URL —
+            # phải resolve URL thành aweme_id trước, nếu không f2 tự coi cả
+            # URL là aweme_id và luôn trả lỗi "nickname is None" (log f2 in
+            # ra chính URL thay vì 1 dãy số là dấu hiệu của bug này).
+            from f2.apps.douyin.utils import AwemeIdFetcher
+
+            aweme_id = await AwemeIdFetcher.get_aweme_id(url)
+            video = await handler.fetch_one_video(aweme_id)
             if not video or not video.video_play_addr:
                 raise RuntimeError("f2 không lấy được play URL của video Douyin")
-            await handler.downloader.create_download_task(
+            # create_download_task (số ít) KHÔNG tồn tại trong f2 — API thật
+            # là create_download_tasks (số nhiều), nhận aweme_data dạng dict
+            # và 1 thư mục đích (không nhận thẳng đường dẫn file cuối cùng).
+            await handler.downloader.create_download_tasks(
                 handler.kwargs,
-                video,
-                str(output_path),
+                video._to_dict(),
+                output_path.parent,
             )
+            downloaded = output_path.parent / f"{aweme_id}_video.mp4"
+            if downloaded.exists():
+                downloaded.rename(output_path)
 
         asyncio.run(_fetch())
 

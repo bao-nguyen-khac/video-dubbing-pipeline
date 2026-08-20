@@ -616,3 +616,95 @@ def test_approve_outline_gate_twice_only_runs_once(client, make_generate_job, mo
 
     assert first.status_code == 202
     assert second.status_code == 409
+
+
+# ─── POST /review/segment — thêm câu thủ công ───────────────────────────────
+
+
+def test_add_segment_inserts_and_marks_edited(client, make_job):
+    job = make_job(
+        status="awaiting_review",
+        supervised=True,
+        review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+
+    res = client.post(
+        f"/api/jobs/{job['job_id']}/review/segment",
+        json={"gate": "transcript", "start": 5.0, "end": 6.5, "text": "Câu cuối tiếng nhỏ."},
+    )
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["segment_count"] == 3
+    assert body["new_index"] == 2
+
+    import pipeline
+
+    saved = pipeline.read_job(job["job_id"])
+    assert saved["status"] == "awaiting_review"  # không đổi status
+    assert saved["review_gates"]["transcript"]["edited"] is True
+    segs = _load(saved["artifacts"]["transcript_reviewed"])["segments"]
+    assert segs[-1] == {"start": 5.0, "end": 6.5, "text": "Câu cuối tiếng nhỏ."}
+
+
+def test_add_segment_script_gate_inserts(client, make_job):
+    """Chốt kịch bản cũng cho thêm câu — source_text rỗng, translated_text = text."""
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="script",
+        script_segments=SCRIPT_SEGMENTS,
+    )
+    res = client.post(
+        f"/api/jobs/{job['job_id']}/review/segment",
+        json={"gate": "script", "start": 5.0, "end": 6.0, "text": "Câu dịch thêm tay."},
+    )
+    assert res.status_code == 201
+    assert res.json()["segment_count"] == 3
+
+    import pipeline
+
+    saved = pipeline.read_job(job["job_id"])
+    assert saved["review_gates"]["script"]["edited"] is True
+    segs = _load(saved["artifacts"]["script"])["segments"]
+    assert segs[-1] == {
+        "start": 5.0, "end": 6.0, "source_text": "", "translated_text": "Câu dịch thêm tay.",
+    }
+
+
+def test_add_segment_rejects_outline_gate(client, make_job):
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="outline",
+        scene_items=[{"narration_text": "x", "start": None, "end": None}],
+    )
+    res = client.post(
+        f"/api/jobs/{job['job_id']}/review/segment",
+        json={"gate": "outline", "start": 1.0, "end": 2.0, "text": "x"},
+    )
+    assert res.status_code == 400
+
+
+def test_add_segment_rejects_invalid_time(client, make_job):
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+    res = client.post(
+        f"/api/jobs/{job['job_id']}/review/segment",
+        json={"gate": "transcript", "start": 2.0, "end": 1.0, "text": "end trước start"},
+    )
+    assert res.status_code == 400
+    import pipeline
+    segs = _load(pipeline.read_job(job["job_id"])["artifacts"]["transcript_reviewed"])["segments"]
+    assert len(segs) == 2  # không ghi gì
+
+
+def test_add_segment_409_when_not_awaiting_review(client, make_job):
+    job = make_job(
+        status="synthesizing", supervised=True, review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+    res = client.post(
+        f"/api/jobs/{job['job_id']}/review/segment",
+        json={"gate": "transcript", "start": 1.0, "end": 2.0, "text": "x"},
+    )
+    assert res.status_code == 409

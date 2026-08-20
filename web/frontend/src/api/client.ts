@@ -265,6 +265,26 @@ export function saveReview(
   });
 }
 
+// Thêm 1 câu THỦ CÔNG vào chốt lời thoại/kịch bản (đoạn video tiếng nhỏ, ASR
+// bỏ sót) — start/end tính bằng giây. Chỉ dùng cho gate "transcript"/"script".
+export function addReviewSegment(
+  jobId: string,
+  gate: ReviewGate,
+  start: number,
+  end: number,
+  text: string,
+) {
+  return request<{
+    job_id: string;
+    gate: ReviewGate;
+    segment_count: number;
+    new_index: number;
+  }>(`/api/jobs/${jobId}/review/segment`, {
+    method: "POST",
+    body: JSON.stringify({ gate, start, end, text }),
+  });
+}
+
 export function approveReview(jobId: string, gate: ReviewGate) {
   return request<{
     job_id: string;

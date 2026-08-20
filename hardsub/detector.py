@@ -28,12 +28,50 @@ from media_utils import get_media_duration
 _REPRESENTATIVE_FRAME_RATIO = 0.4
 
 
+def _pick_frame_timestamp(duration: float, segments: list[dict] | None) -> float:
+    """
+    Chọn mốc thời gian trích khung hình, ưu tiên rơi vào lúc có lời thoại
+    (nhiều khả năng phụ đề gốc đang hiện trên màn hình) thay vì mốc 40% cố
+    định — mốc cố định có thể rơi đúng lúc phụ đề vừa tắt/chưa hiện, khiến
+    người dùng không thấy gì để khoanh vùng.
+
+    Không có segment nào (job "visual" hoặc transcript rỗng) → giữ hành vi cũ.
+    """
+    target = max(duration * _REPRESENTATIVE_FRAME_RATIO, 0.0)
+    if not segments:
+        return target
+
+    # Segment chứa mốc target, hoặc gần target nhất nếu không có segment nào
+    # bao trùm (mốc rơi vào khoảng lặng giữa hai câu).
+    best = None
+    best_distance = None
+    for seg in segments:
+        start = seg.get("start")
+        end = seg.get("end")
+        if start is None or end is None or end <= start:
+            continue
+        if start <= target <= end:
+            best = seg
+            break
+        distance = min(abs(target - start), abs(target - end))
+        if best_distance is None or distance < best_distance:
+            best, best_distance = seg, distance
+
+    if best is None:
+        return target
+    return (best["start"] + best["end"]) / 2
+
+
 def extract_representative_frame(
-    video_path: str | Path, job_dir: str | Path
+    video_path: str | Path, job_dir: str | Path, segments: list[dict] | None = None
 ) -> tuple[Path, dict]:
     """
     Trích 1 khung hình đại diện (giữ nguyên độ phân giải gốc) để người dùng tự
     khoanh vùng phụ đề gốc cần mờ tại chốt kiểm duyệt.
+
+    `segments` (transcript, có start/end giây) khi có sẽ được dùng để chọn
+    mốc rơi vào giữa một câu thoại thay vì mốc 40% duration cố định — xem
+    `_pick_frame_timestamp()`.
 
     Idempotent: không trích lại nếu file đã tồn tại — giữ đúng khung hình ban
     đầu người dùng đã dùng để khoanh vùng qua các lượt lưu/duyệt lại.
@@ -44,7 +82,7 @@ def extract_representative_frame(
     out_path = job_dir / "hardsub_frame.png"
     if not out_path.exists():
         duration = get_media_duration(video_path)
-        ts = max(duration * _REPRESENTATIVE_FRAME_RATIO, 0.0)
+        ts = _pick_frame_timestamp(duration, segments)
         subprocess.run(
             [
                 "ffmpeg", "-y",

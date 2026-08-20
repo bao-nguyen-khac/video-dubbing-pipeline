@@ -271,3 +271,92 @@ def test_mark_regenerated_resets_approval_and_counts(make_job):
 def test_next_status_after_gate():
     assert gates.NEXT_STATUS_AFTER_GATE[gates.GATE_TRANSCRIPT] == "scripting"
     assert gates.NEXT_STATUS_AFTER_GATE[gates.GATE_SCRIPT] == "synthesizing"
+
+
+# ─── add_segment — thêm câu thủ công (đoạn tiếng nhỏ ASR bỏ sót) ─────────────
+
+
+def test_add_segment_transcript_inserts_and_sorts(make_job):
+    job = make_job(
+        status="awaiting_review",
+        supervised=True,
+        review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+
+    # Chèn 1 câu Ở GIỮA 2 câu có sẵn (0-0.62 và 0.9-1.94) để chứng minh có sort
+    count, new_index = gates.add_segment(job, gates.GATE_TRANSCRIPT, 0.7, 0.85, "  Câu chèn giữa.  ")
+
+    assert count == 3
+    assert new_index == 1  # sau khi sort theo start, nằm giữa
+    data = _load(job["artifacts"]["transcript_reviewed"])
+    assert [s["text"] for s in data["segments"]] == [
+        "Này Mít Bít,",
+        "Câu chèn giữa.",  # đã strip khoảng trắng
+        "nếu tôi đưa anh máy ảnh này,",
+    ]
+    assert data["segments"][1] == {"start": 0.7, "end": 0.85, "text": "Câu chèn giữa."}
+    # Bất biến: không có 'words'
+    assert all("words" not in s for s in data["segments"])
+
+
+def test_add_segment_transcript_appends_at_end(make_job):
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+    count, new_index = gates.add_segment(job, gates.GATE_TRANSCRIPT, 5.0, 6.5, "Câu cuối tiếng nhỏ.")
+    assert count == 3
+    assert new_index == 2  # sau tất cả
+
+
+def test_add_segment_script_gate_has_empty_source_and_updates_content(make_job):
+    """Chốt kịch bản: câu mới có source_text rỗng + translated_text, content
+    được tính lại cho khớp."""
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="script",
+        script_segments=SCRIPT_SEGMENTS,
+    )
+
+    count, new_index = gates.add_segment(job, gates.GATE_SCRIPT, 5.0, 6.0, "Câu dịch thêm tay.")
+
+    assert count == 3
+    assert new_index == 2
+    data = _load(job["artifacts"]["script"])
+    new_seg = data["segments"][2]
+    assert new_seg == {
+        "start": 5.0, "end": 6.0, "source_text": "", "translated_text": "Câu dịch thêm tay.",
+    }
+    # content tính lại từ mọi câu (theo translated_text)
+    assert data["content"].endswith("Câu dịch thêm tay.")
+    assert "Này MrBeast," in data["content"]
+
+
+def test_add_segment_rejects_outline_gate(make_job):
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="outline",
+        scene_items=[{"narration_text": "x", "start": None, "end": None}],
+    )
+    with pytest.raises(gates.GateError):
+        gates.add_segment(job, gates.GATE_OUTLINE, 1.0, 2.0, "không cho phép")
+
+
+@pytest.mark.parametrize(
+    "start,end,text",
+    [
+        (1.0, 1.0, "bằng nhau"),      # end <= start
+        (2.0, 1.0, "end trước start"),
+        (-1.0, 2.0, "start âm"),
+        (0.0, 1.0, "   "),            # text rỗng
+    ],
+)
+def test_add_segment_rejects_invalid(make_job, start, end, text):
+    job = make_job(
+        status="awaiting_review", supervised=True, review_gate="transcript",
+        reviewed_segments=REVIEWED_SEGMENTS,
+    )
+    with pytest.raises(gates.GateError):
+        gates.add_segment(job, gates.GATE_TRANSCRIPT, start, end, text)
+    # Không ghi gì khi lỗi
+    data = _load(job["artifacts"]["transcript_reviewed"])
+    assert len(data["segments"]) == 2

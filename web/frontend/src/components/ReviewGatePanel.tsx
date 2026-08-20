@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  addReviewSegment,
   ApiError,
   approveReview,
   getReview,
@@ -26,6 +27,23 @@ function formatTime(seconds: number | null): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// Parse ô nhập thời gian: chấp nhận "m:ss", "mm:ss.ms" hoặc số giây thuần
+// ("83", "83.5"). Trả về giây, hoặc null nếu không hợp lệ.
+function parseTime(input: string): number | null {
+  const s = input.trim();
+  if (!s) return null;
+  if (s.includes(":")) {
+    const parts = s.split(":");
+    if (parts.length !== 2) return null;
+    const m = Number(parts[0]);
+    const sec = Number(parts[1]);
+    if (!Number.isFinite(m) || !Number.isFinite(sec) || m < 0 || sec < 0 || sec >= 60) return null;
+    return m * 60 + sec;
+  }
+  const v = Number(s);
+  return Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 // 009: bề rộng hiển thị cố định cho khung hình mẫu — toạ độ quy đổi ngược về
@@ -53,7 +71,11 @@ export default function ReviewGatePanel({
   const imgWrapRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "approve" | "regenerate" | null>(null);
+  const [busy, setBusy] = useState<"save" | "approve" | "regenerate" | "add" | null>(null);
+  // Form "thêm câu thủ công" ở chốt lời thoại (đoạn cuối tiếng nhỏ, ASR bỏ sót)
+  const [addStart, setAddStart] = useState("");
+  const [addEnd, setAddEnd] = useState("");
+  const [addText, setAddText] = useState("");
 
   async function load() {
     setError(null);
@@ -177,6 +199,52 @@ export default function ReviewGatePanel({
     } catch (err) {
       // Giữ nguyên nội dung đang sửa — không được âm thầm mất phần sửa
       setError(err instanceof ApiError ? err.message : "Lưu thất bại");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAddSegment() {
+    if (!payload) return;
+    const start = parseTime(addStart);
+    const end = parseTime(addEnd);
+    if (start === null || end === null) {
+      setError("Mốc thời gian không hợp lệ — dùng dạng m:ss (vd 1:23) hoặc số giây.");
+      return;
+    }
+    if (end <= start) {
+      setError("Thời điểm kết thúc phải sau thời điểm bắt đầu.");
+      return;
+    }
+    if (!addText.trim()) {
+      setError("Nhập nội dung câu trước khi thêm.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setBusy("add");
+    try {
+      // Giữ phần text đang sửa dở: lưu trước khi thêm để load() không xoá mất
+      const edits = payload.segments
+        .filter((s) => (texts[s.index] ?? "") !== s.text)
+        .map((s) => ({ index: s.index, text: texts[s.index] ?? "" }));
+      if (edits.length > 0) {
+        await saveReview(
+          jobId,
+          payload.gate,
+          edits,
+          payload.hardsub_frame_url && hardsubBox ? hardsubBox : undefined,
+          payload.hardsub_frame_url ? hardsubNoRangesText : undefined,
+        );
+      }
+      await addReviewSegment(jobId, payload.gate, start, end, addText.trim());
+      setAddStart("");
+      setAddEnd("");
+      setAddText("");
+      setNotice("Đã thêm 1 câu thủ công.");
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Thêm câu thất bại");
     } finally {
       setBusy(null);
     }
@@ -383,6 +451,68 @@ export default function ReviewGatePanel({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Thêm câu thủ công — ở chốt lời thoại + kịch bản: đoạn video tiếng nhỏ,
+          ASR bỏ sót nên không tự tách được sub, cho người dùng tự nhập mốc
+          thời gian + lời thoại. Chốt outline không có timing thật nên không hiện. */}
+      {(payload.gate === "transcript" || payload.gate === "script") && (
+        <div className="review-add" style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+          <p className="page-head__lead" style={{ marginBottom: "0.5rem" }}>
+            {payload.gate === "script"
+              ? "Thêm câu dịch thủ công (đoạn tiếng nhỏ ASR bỏ sót — không có câu gốc để đối chiếu). "
+              : "Thêm câu thủ công (đoạn tiếng nhỏ ASR bỏ sót). "}
+            Mốc thời gian dạng <span className="mono">m:ss</span> (vd{" "}
+            <span className="mono">1:23</span>) hoặc số giây.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+            <div className="field" style={{ margin: 0, width: "7rem" }}>
+              <label className="field__label" htmlFor="add-seg-start">Bắt đầu</label>
+              <input
+                id="add-seg-start"
+                type="text"
+                className="input mono"
+                placeholder="1:23"
+                value={addStart}
+                onChange={(e) => setAddStart(e.target.value)}
+              />
+            </div>
+            <div className="field" style={{ margin: 0, width: "7rem" }}>
+              <label className="field__label" htmlFor="add-seg-end">Kết thúc</label>
+              <input
+                id="add-seg-end"
+                type="text"
+                className="input mono"
+                placeholder="1:27"
+                value={addEnd}
+                onChange={(e) => setAddEnd(e.target.value)}
+              />
+            </div>
+            <div className="field" style={{ margin: 0, flex: "1 1 12rem" }}>
+              <label className="field__label" htmlFor="add-seg-text">
+                {payload.gate === "script" ? "Lời dịch" : "Lời thoại"}
+              </label>
+              <textarea
+                id="add-seg-text"
+                className="input"
+                rows={2}
+                placeholder="Nội dung câu ở đoạn này..."
+                value={addText}
+                onChange={(e) => setAddText(e.target.value)}
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={handleAddSegment}
+            disabled={busy !== null}
+            style={{ marginTop: "0.6rem" }}
+          >
+            {busy === "add" ? <span className="btn__spinner" /> : null}
+            {busy === "add" ? "Đang thêm..." : "+ Thêm câu"}
+          </button>
         </div>
       )}
 

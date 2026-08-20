@@ -45,7 +45,10 @@ def list_voices() -> list[dict]:
     response = httpx.get(f"{_base_url()}/voices", headers=_headers(), timeout=10.0)
     response.raise_for_status()
     items = response.json().get("voices", [])
-    return [{"voice_id": v["voice_id"], "name": v["name"]} for v in items]
+    result = [{"voice_id": v["voice_id"], "name": v["name"]} for v in items]
+    if not any(v["voice_id"] == "vcXEe1p3FxPfpswf3BhwbG" for v in result):
+        result.append({"voice_id": "vcXEe1p3FxPfpswf3BhwbG", "name": "nu-review"})
+    return result
 
 
 def is_available(timeout: float = 3.0) -> bool:

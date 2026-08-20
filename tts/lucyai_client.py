@@ -48,6 +48,11 @@ def list_voices(api_key: str) -> list[dict]:
         "name": "Giọng adam (Giá tiết kiệm)",
         "isActive": True
     })
+    items.append({
+        "id": "vcXEe1p3FxPfpswf3BhwbG",
+        "name": "nu-review",
+        "isActive": True
+    })
     return [
         {"voice_id": item["id"], "name": item["name"]}
         for item in items

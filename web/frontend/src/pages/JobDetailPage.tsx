@@ -17,7 +17,7 @@ import {
 import AppShell from "../components/AppShell";
 import Callout from "../components/Callout";
 import JobProgress from "../components/JobProgress";
-import { IconArrowLeft, IconDownload, IconPlay, IconRetry } from "../components/Icon";
+import { IconArrowLeft, IconDownload, IconPlay, IconRetry, IconShare } from "../components/Icon";
 import ReviewGatePanel from "../components/ReviewGatePanel";
 import {
   absoluteTime,
@@ -86,6 +86,15 @@ export default function JobDetailPage() {
   // remount panel, xoá mất nội dung người dùng đang gõ. Tạm dừng poll cho tới
   // khi lưu/phê duyệt xong.
   const [reviewDirty, setReviewDirty] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  // Chrome đòi navigator.share() phải gọi gần như ngay trong lúc còn "user
+  // activation" của cú click — chờ fetch() tải video XONG rồi mới share() dễ
+  // trượt mất activation, báo "Permission denied". Tải sẵn blob NGAY khi có
+  // video kết quả (trước khi người dùng bấm) để lúc bấm chỉ còn gọi share()
+  // gần như đồng bộ, không có await nào xen giữa nữa.
+  const shareFileRef = useRef<File | null>(null);
+  const sharePrefetchJobIdRef = useRef<string | null>(null);
 
   function stopPolling() {
     if (pollRef.current !== null) {
@@ -265,6 +274,69 @@ export default function JobDetailPage() {
       setError(err instanceof ApiError ? err.message : "Chạy lại thất bại");
     } finally {
       setRerunning(false);
+    }
+  }
+
+  // Tải sẵn video thành File ngay khi job xong — xem giải thích ở khai báo
+  // shareFileRef phía trên. Chạy nền, không chặn UI; lỗi ở đây chỉ khiến nút
+  // share fallback về tải-lúc-bấm (vẫn có thể trượt activation nhưng còn hơn
+  // không share được).
+  useEffect(() => {
+    if (job?.status !== "done" || !job.output_video_url) return;
+    if (sharePrefetchJobIdRef.current === job.job_id) return;
+    sharePrefetchJobIdRef.current = job.job_id;
+    const jobId = job.job_id;
+    fetch(outputUrl(jobId))
+      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("prefetch failed"))))
+      .then((blob) => {
+        shareFileRef.current = new File([blob], `${jobId}.mp4`, { type: "video/mp4" });
+      })
+      .catch(() => {
+        // Không tải trước được — handleShareAirDrop sẽ tự fetch lại lúc bấm
+      });
+  }, [job?.status, job?.output_video_url, job?.job_id]);
+
+  // Chia sẻ video kết quả qua AirDrop bằng Web Share API (chỉ hoạt động khi
+  // trình duyệt chạy trên máy Mac có hỗ trợ chia sẻ file, ví dụ Chrome/Safari
+  // gần đây).
+  async function handleShareAirDrop() {
+    if (!job) return;
+    setShareError(null);
+    if (typeof navigator === "undefined" || typeof navigator.share !== "function") {
+      setShareError(
+        "Trình duyệt này không hỗ trợ chia sẻ file trực tiếp. Hãy bấm \"Tải video\" rồi AirDrop file từ Finder.",
+      );
+      return;
+    }
+    setSharing(true);
+    try {
+      // Dùng file đã tải sẵn (useEffect ở trên) nếu có — để share() được gọi
+      // gần như đồng bộ ngay trong lúc còn "user activation" của cú click.
+      // Chỉ fetch trực tiếp nếu prefetch chưa xong kịp (job vừa done xong).
+      const file =
+        shareFileRef.current ??
+        (await fetch(outputUrl(job.job_id)).then((res) => {
+          if (!res.ok) throw new Error("Không tải được video để chia sẻ");
+          return res.blob();
+        }).then((blob) => new File([blob], `${job.job_id}.mp4`, { type: "video/mp4" })));
+      if (typeof navigator.canShare === "function" && !navigator.canShare({ files: [file] })) {
+        setShareError(
+          "Trình duyệt này không hỗ trợ chia sẻ file video. Hãy bấm \"Tải video\" rồi AirDrop file từ Finder.",
+        );
+        return;
+      }
+      await navigator.share({ files: [file], title: `Video ${job.job_id}` });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        setShareError(
+          "Chưa kịp chuẩn bị file để chia sẻ ngay lúc bấm — đợi vài giây rồi bấm lại (video cần thời gian tải sẵn).",
+        );
+        return;
+      }
+      setShareError(err instanceof Error ? err.message : "Chia sẻ thất bại");
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -483,7 +555,21 @@ export default function JobDetailPage() {
                   <IconDownload />
                   Tải video
                 </a>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={handleShareAirDrop}
+                  disabled={sharing}
+                >
+                  {sharing ? <span className="btn__spinner" /> : <IconShare />}
+                  {sharing ? "Đang chuẩn bị..." : "Chia sẻ qua AirDrop"}
+                </button>
               </div>
+              {shareError && (
+                <span className="field__hint" style={{ color: "var(--danger)" }}>
+                  {shareError}
+                </span>
+              )}
             </div>
           )}
         </div>

@@ -911,8 +911,15 @@ def run_pipeline(
             )
             if active_hardsub_blur and hardsub_applicable:
                 try:
+                    try:
+                        with open(transcript_path, encoding="utf-8") as f:
+                            transcript_segments = json.load(f).get("segments", [])
+                    except Exception:
+                        # transcript đọc lại lỗi không được chặn trích khung
+                        # hình — quay về mốc 40% cố định như trước (US3).
+                        transcript_segments = []
                     frame_path, frame_size = extract_representative_frame(
-                        job["artifacts"]["source_video"], job_dir
+                        job["artifacts"]["source_video"], job_dir, transcript_segments
                     )
                     job = read_job(jid)
                     job["artifacts"]["hardsub_frame"] = str(frame_path)

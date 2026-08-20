@@ -169,6 +169,53 @@ async def save_review(job_id: str, body: SaveReviewRequest):
     }
 
 
+# ─── POST /review/segment — thêm câu thủ công (đoạn ASR bỏ sót) ─────────────
+
+
+class AddSegmentRequest(BaseModel):
+    gate: str
+    start: float
+    end: float
+    text: str
+
+
+@router.post("/{job_id}/review/segment", status_code=201)
+async def add_review_segment(job_id: str, body: AddSegmentRequest):
+    """
+    POST /api/jobs/{job_id}/review/segment — thêm 1 câu THỦ CÔNG vào chốt lời
+    thoại HOẶC chốt kịch bản khi đoạn video tiếng nhỏ, ASR bỏ sót nên không tự
+    tách được sub.
+
+    Chỉ áp dụng chốt lời thoại (transcript) + kịch bản (script) — chốt outline
+    (generate) không có timing thật để chèn theo thời gian. Status giữ nguyên
+    `awaiting_review` để người dùng thêm nhiều câu rồi mới phê duyệt.
+    """
+    if body.gate not in gates.MANUAL_ADD_GATES:
+        return _error(400, "Chỉ thêm câu thủ công được ở chốt lời thoại hoặc kịch bản")
+
+    try:
+        job = _load_awaiting_job(job_id, body.gate)
+    except _GuardError as e:
+        return e.response
+
+    try:
+        segment_count, new_index = gates.add_segment(
+            job, body.gate, body.start, body.end, body.text
+        )
+    except gates.GateError as e:
+        return _error(400, str(e))
+
+    gates.mark_edited(job, body.gate, segment_count)
+    write_job(job_id, job)
+
+    return {
+        "job_id": job_id,
+        "gate": body.gate,
+        "segment_count": segment_count,
+        "new_index": new_index,
+    }
+
+
 # ─── POST /review/approve — phê duyệt, chạy tiếp ────────────────────────────
 
 

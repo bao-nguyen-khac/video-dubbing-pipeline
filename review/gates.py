@@ -261,6 +261,71 @@ def save_edits(job: dict, gate: str, edits: list[dict]) -> tuple[int, int]:
     return len(kept), dropped
 
 
+# Chốt cho phép thêm câu thủ công. Outline (010-generate) KHÔNG hỗ trợ: scene
+# chưa có timing thật (start/end null tới bước synthesizing), thêm câu theo mốc
+# thời gian là vô nghĩa ở đó.
+MANUAL_ADD_GATES = (GATE_TRANSCRIPT, GATE_SCRIPT)
+
+
+def add_segment(job: dict, gate: str, start: float, end: float, text: str) -> tuple[int, int]:
+    """
+    Chèn 1 câu THỦ CÔNG vào chốt lời thoại HOẶC chốt kịch bản rồi sắp lại theo
+    mốc bắt đầu — dùng khi đoạn video tiếng nhỏ, ASR bỏ sót nên không tự tách sub.
+
+    - Chốt lời thoại: câu mới = {start, end, text}.
+    - Chốt kịch bản: câu mới = {start, end, source_text: "", translated_text: text}
+      — KHÔNG có câu gốc (ASR bỏ sót); `content` được tính lại cho khớp cách
+      generate_script() dựng nó (research.md §... — giống nhánh GATE_SCRIPT trong
+      save_edits()).
+
+    Câu thêm tay KHÔNG có 'words' (đúng bất biến ở docstring đầu module) nên chảy
+    qua bước scripting/synthesizing như mọi câu đã sửa tay khác.
+
+    Returns: (tổng số câu sau khi thêm, index của câu vừa thêm sau khi sort).
+
+    Raises:
+        GateError: gate không hỗ trợ, text rỗng, hoặc thời gian không hợp lệ.
+    """
+    if gate not in MANUAL_ADD_GATES:
+        raise GateError(f"Chốt '{gate}' không hỗ trợ thêm câu thủ công")
+    text = (text or "").strip()
+    if not text:
+        raise GateError("Nội dung câu không được để trống")
+    try:
+        start = float(start)
+        end = float(end)
+    except (TypeError, ValueError):
+        raise GateError("Mốc thời gian phải là số (giây)") from None
+    if start < 0 or end < 0:
+        raise GateError("Mốc thời gian không được âm")
+    if end <= start:
+        raise GateError("Thời điểm kết thúc phải sau thời điểm bắt đầu")
+
+    path = gate_file_path(job, gate)
+    data = _read_json(path)
+    array_key = GATE_ARRAY_KEY[gate]
+    field = EDITABLE_FIELD[gate]
+    segments = data.get(array_key, [])
+
+    new_seg: dict = {"start": start, "end": end}
+    if gate == GATE_SCRIPT:
+        new_seg["source_text"] = ""  # ASR bỏ sót nên không có câu gốc để đối chiếu
+    new_seg[field] = text
+
+    segments.append(new_seg)
+    # sort giữ nguyên tham chiếu các object — `is` bên dưới vẫn tìm được câu mới
+    segments.sort(key=lambda s: (float(s.get("start") or 0.0), float(s.get("end") or 0.0)))
+    data[array_key] = segments
+
+    if gate == GATE_SCRIPT:
+        data["content"] = " ".join(s.get(field) or "" for s in segments)
+
+    _write_json(path, data)
+
+    new_index = next((i for i, s in enumerate(segments) if s is new_seg), len(segments) - 1)
+    return len(segments), new_index
+
+
 # ─── Trạng thái chốt trong job.json ──────────────────────────────────────────
 
 
