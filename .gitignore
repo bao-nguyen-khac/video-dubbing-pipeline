@@ -14,10 +14,24 @@ build/
 venv/
 env/
 .env
+.env.*
+!.env.example
 
-# Jobs (runtime data — không commit)
+# Credentials & Secrets (không bao giờ commit)
+*.key
+*.pem
+*.p12
+*.crt
+credentials*.json
+client_secret*.json
+token*.json
+
+# Jobs & Runtime data (không commit)
 jobs/*
 !jobs/.gitignore
+script-to-video/*
+!script-to-video/.gitignore
+!script-to-video/*.md
 
 # Sổ video đã tải (state cục bộ — trỏ tới file trong jobs/)
 download_registry.json
@@ -32,21 +46,24 @@ download_registry.json
 .AppleDouble
 .LSOverride
 
-# Editor
-.vscode/settings.json
+# Editor & Local configs
+.vscode/
 .idea/
 *.swp
 *.swo
+.claude/settings.local.json
+.codegraph/
 
 # Logs
 *.log
+logs/
 
 # Test output
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Node.js / frontend (web/frontend, feature 002-web-ui)
+# Node.js / frontend
 node_modules/
 web/frontend/dist/
 web/frontend/.vite/

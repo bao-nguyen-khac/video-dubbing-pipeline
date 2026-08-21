@@ -7,13 +7,6 @@
       "runtimeArgs": ["run", "dev"],
       "port": 5173,
       "cwd": "web/frontend"
-    },
-    {
-      "name": "frontend-ui-pro-max",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5180"],
-      "port": 5180,
-      "cwd": "/Users/baonk/Desktop/workspace/learn/vibe/media-generation-ui-pro-max/web/frontend"
     }
   ]
 }
